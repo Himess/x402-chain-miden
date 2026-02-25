@@ -67,16 +67,19 @@ impl MidenChainProvider {
     ///
     /// Returns the transaction ID as a hex string on success.
     ///
-    /// With the `miden-native` feature, this method deserializes the `ProvenTransaction`
-    /// and extracts the transaction ID. Actual network submission requires the
-    /// `miden-client-native` feature with a configured RPC client.
+    /// With the `miden-client-native` feature, this deserializes both the
+    /// `ProvenTransaction` and `TransactionInputs`, then submits via gRPC.
+    /// With only `miden-native`, it deserializes and returns the tx ID
+    /// but cannot perform actual network submission.
     pub async fn submit_proven_transaction(
         &self,
         proven_tx_bytes: &[u8],
+        transaction_inputs_bytes: &[u8],
     ) -> Result<String, MidenProviderError> {
         #[cfg(feature = "miden-client-native")]
         {
-            use miden_protocol::transaction::ProvenTransaction;
+            use miden_client::rpc::NodeRpcClient;
+            use miden_protocol::transaction::{ProvenTransaction, TransactionInputs};
             use miden_protocol::utils::serde::Deserializable;
 
             let proven_tx = ProvenTransaction::read_from_bytes(proven_tx_bytes).map_err(|e| {
@@ -84,6 +87,13 @@ impl MidenChainProvider {
                     "Failed to deserialize ProvenTransaction: {e}"
                 ))
             })?;
+
+            let tx_inputs =
+                TransactionInputs::read_from_bytes(transaction_inputs_bytes).map_err(|e| {
+                    MidenProviderError::SubmissionError(format!(
+                        "Failed to deserialize TransactionInputs: {e}"
+                    ))
+                })?;
 
             let tx_id = proven_tx.id();
 
@@ -94,25 +104,21 @@ impl MidenChainProvider {
                 "Submitting ProvenTransaction to Miden node"
             );
 
-            // TODO(facilitator-client): Full network submission requires a
-            // miden_client::Client instance (not just an RPC client) because
-            // NodeRpcClient::submit_proven_transaction needs TransactionInputs
-            // alongside the ProvenTransaction. The facilitator should be
-            // refactored to hold an Arc<Mutex<Client<...>>> similar to
-            // MidenClientSigner, which will let it call
-            // client.submit_proven_transaction(proven_tx, &tx_result).
-            //
-            // For now, we return the tx_id from the deserialized proof.
-            // The STARK proof is already verified by the facilitator in
-            // verify_miden_payment(), so the payment is cryptographically valid.
-            // Network submission is the final step.
+            let block_num = self
+                .rpc_client
+                .submit_proven_transaction(proven_tx, tx_inputs)
+                .await
+                .map_err(|e| {
+                    MidenProviderError::SubmissionError(format!(
+                        "RPC submit_proven_transaction failed: {e}"
+                    ))
+                })?;
 
             #[cfg(feature = "tracing")]
-            tracing::warn!(
+            tracing::info!(
                 tx_id = %tx_id,
-                rpc_url = %self.rpc_url,
-                "ProvenTransaction deserialized and verified. Network submission \
-                 requires facilitator Client integration (see TODO)."
+                block_num = %block_num,
+                "ProvenTransaction admitted to mempool"
             );
 
             Ok(format!("{tx_id}"))
@@ -122,6 +128,8 @@ impl MidenChainProvider {
         {
             use miden_protocol::transaction::ProvenTransaction;
             use miden_protocol::utils::serde::Deserializable;
+
+            let _ = transaction_inputs_bytes;
 
             let proven_tx = ProvenTransaction::read_from_bytes(proven_tx_bytes).map_err(|e| {
                 MidenProviderError::SubmissionError(format!(
@@ -144,7 +152,7 @@ impl MidenChainProvider {
 
         #[cfg(not(feature = "miden-native"))]
         {
-            let _ = proven_tx_bytes;
+            let _ = (proven_tx_bytes, transaction_inputs_bytes);
             Err(MidenProviderError::NotImplemented(
                 "submit_proven_transaction requires miden-native feature".to_string(),
             ))

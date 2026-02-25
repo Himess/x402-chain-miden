@@ -46,13 +46,15 @@ pub trait MidenSignerLike: Send + Sync {
     ///
     /// # Returns
     ///
-    /// A tuple of `(proven_transaction_hex, transaction_id_hex)`.
+    /// A tuple of `(proven_transaction_hex, transaction_id_hex, transaction_inputs_hex)`.
+    /// The `transaction_inputs_hex` is needed by the facilitator to submit the
+    /// proven transaction to the Miden node.
     async fn create_and_prove_p2id(
         &self,
         recipient: &str,
         faucet_id: &str,
         amount: u64,
-    ) -> Result<(String, String), X402Error>;
+    ) -> Result<(String, String, String), X402Error>;
 }
 
 /// Client for signing V2 Miden exact scheme payments.
@@ -211,10 +213,11 @@ impl MidenSignerLike for MidenClientSigner {
         recipient: &str,
         faucet_id: &str,
         amount: u64,
-    ) -> Result<(String, String), X402Error> {
+    ) -> Result<(String, String, String), X402Error> {
         use miden_protocol::account::AccountId;
         use miden_protocol::asset::{Asset, FungibleAsset};
         use miden_protocol::note::NoteType;
+        use miden_protocol::transaction::TransactionInputs;
         use miden_protocol::utils::serde::Serializable;
 
         // 1. Parse account IDs
@@ -262,7 +265,14 @@ impl MidenSignerLike for MidenClientSigner {
                 X402Error::SigningError(format!("Transaction execution failed: {e}"))
             })?;
 
-        // 5. Generate STARK proof.
+        // 5. Extract TransactionInputs before proving.
+        //    The facilitator needs these to submit the proven transaction
+        //    to the Miden node (NodeRpcClient::submit_proven_transaction
+        //    requires both ProvenTransaction and TransactionInputs).
+        let tx_inputs = TransactionInputs::from(&tx_result);
+        let tx_inputs_hex = hex::encode(tx_inputs.to_bytes());
+
+        // 6. Generate STARK proof.
         //    Grab the prover (Arc<dyn TransactionProver + Send + Sync>)
         //    from the client, release the lock, then prove independently.
         let prover = client_guard.prover();
@@ -273,13 +283,13 @@ impl MidenSignerLike for MidenClientSigner {
             .await
             .map_err(|e| X402Error::SigningError(format!("Transaction proving failed: {e}")))?;
 
-        // 6. Serialize the ProvenTransaction — the facilitator will verify
+        // 7. Serialize the ProvenTransaction — the facilitator will verify
         //    the proof and submit it to the network.
         let tx_bytes = proven_tx.to_bytes();
         let tx_hex = hex::encode(&tx_bytes);
         let tx_id = format!("{}", proven_tx.id());
 
-        Ok((tx_hex, tx_id))
+        Ok((tx_hex, tx_id, tx_inputs_hex))
     }
 }
 
@@ -306,7 +316,7 @@ where
             .map_err(|_| X402Error::ParseError("Invalid amount".to_string()))?;
 
         // Create P2ID note, execute, prove
-        let (proven_tx_hex, tx_id) = self
+        let (proven_tx_hex, tx_id, tx_inputs_hex) = self
             .signer
             .create_and_prove_p2id(&recipient, &faucet_id, amount)
             .await?;
@@ -321,6 +331,7 @@ where
                 })?,
             proven_transaction: proven_tx_hex,
             transaction_id: tx_id,
+            transaction_inputs: tx_inputs_hex,
         };
 
         let payload = v2::PaymentPayload {

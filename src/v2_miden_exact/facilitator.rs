@@ -260,14 +260,18 @@ async fn settle_miden_payment(
 
     let miden_payload = &request.payment_payload.payload;
 
-    // Decode the proven transaction bytes from hex
+    // Decode the proven transaction and transaction inputs from hex
     let proven_tx_bytes = hex::decode(&miden_payload.proven_transaction).map_err(|e| {
         MidenExactError::DeserializationError(format!("Invalid hex in proven_transaction: {e}"))
     })?;
 
+    let tx_inputs_bytes = hex::decode(&miden_payload.transaction_inputs).map_err(|e| {
+        MidenExactError::DeserializationError(format!("Invalid hex in transaction_inputs: {e}"))
+    })?;
+
     // Submit to the Miden node
     let tx_id = provider
-        .submit_proven_transaction(&proven_tx_bytes)
+        .submit_proven_transaction(&proven_tx_bytes, &tx_inputs_bytes)
         .await
         .map_err(|e| MidenExactError::ProviderError(e.to_string()))?;
 

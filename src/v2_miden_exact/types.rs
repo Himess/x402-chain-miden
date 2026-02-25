@@ -66,6 +66,12 @@ pub struct MidenExactPayload {
     pub proven_transaction: String,
     /// The transaction ID (hex-encoded hash of the proven transaction).
     pub transaction_id: String,
+    /// The serialized `TransactionInputs` bytes (hex-encoded).
+    ///
+    /// Required for submitting the proven transaction to the Miden node.
+    /// The node needs both the proven transaction and its inputs for
+    /// mempool admission. Serialized using `miden_protocol::utils::serde::Serializable`.
+    pub transaction_inputs: String,
 }
 
 /// Type alias for V2 payment requirements with Miden-specific types.
@@ -169,11 +175,13 @@ mod tests {
             from: "0xaabbccdd".parse().unwrap(),
             proven_transaction: "deadbeef".to_string(),
             transaction_id: "0x1234".to_string(),
+            transaction_inputs: "cafebabe".to_string(),
         };
         let json = serde_json::to_string(&payload).unwrap();
         let deserialized: MidenExactPayload = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.from, payload.from);
         assert_eq!(deserialized.proven_transaction, "deadbeef");
         assert_eq!(deserialized.transaction_id, "0x1234");
+        assert_eq!(deserialized.transaction_inputs, "cafebabe");
     }
 }

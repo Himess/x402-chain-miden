@@ -246,8 +246,8 @@ mod client_tests {
             _recipient: &str,
             _faucet_id: &str,
             _amount: u64,
-        ) -> Result<(String, String), X402Error> {
-            Ok(("deadbeef".to_string(), "cafebabe".to_string()))
+        ) -> Result<(String, String, String), X402Error> {
+            Ok(("deadbeef".to_string(), "cafebabe".to_string(), "01020304".to_string()))
         }
     }
 
@@ -351,6 +351,7 @@ mod payload_tests {
             from: "0xdeadbeef".parse().unwrap(),
             proven_transaction: "aabbccdd".to_string(),
             transaction_id: "11223344".to_string(),
+            transaction_inputs: "55667788".to_string(),
         };
 
         let json = serde_json::to_string(&payload).unwrap();
@@ -358,6 +359,7 @@ mod payload_tests {
         assert_eq!(payload.from, recovered.from);
         assert_eq!(payload.proven_transaction, recovered.proven_transaction);
         assert_eq!(payload.transaction_id, recovered.transaction_id);
+        assert_eq!(payload.transaction_inputs, recovered.transaction_inputs);
     }
 
     #[test]
@@ -366,12 +368,14 @@ mod payload_tests {
             from: "0xaabb".parse().unwrap(),
             proven_transaction: "cafebabe".to_string(),
             transaction_id: "deadbeef".to_string(),
+            transaction_inputs: "01020304".to_string(),
         };
 
         let value = serde_json::to_value(&payload).unwrap();
         assert!(value["from"].is_string());
         assert_eq!(value["provenTransaction"], "cafebabe");
         assert_eq!(value["transactionId"], "deadbeef");
+        assert_eq!(value["transactionInputs"], "01020304");
     }
 
     #[test]
