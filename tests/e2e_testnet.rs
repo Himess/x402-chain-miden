@@ -210,6 +210,343 @@ async fn e2e_p2id_transfer_via_x402_crate() {
 }
 
 // ============================================================================
+// E2E: Private vs Public P2ID Transfer Comparison
+// ============================================================================
+
+/// Compare Public vs Private P2ID transfers:
+/// 1. Create both a Public and Private P2ID note
+/// 2. Prove both (STARK proofs)
+/// 3. Inspect ProvenTransaction output notes — Full vs Header
+/// 4. Compare proof sizes and timing
+/// 5. Submit the private transfer to the network
+/// 6. Query notes via RPC to verify on-chain visibility difference
+/// 7. Report the full comparison
+#[tokio::test]
+#[ignore] // requires testnet + funded wallets
+async fn e2e_private_p2id_transfer() {
+    use miden_client::rpc::NodeRpcClient;
+    use miden_client::transaction::{PaymentNoteDescription, TransactionRequestBuilder};
+    use miden_protocol::account::AccountId;
+    use miden_protocol::asset::{Asset, FungibleAsset};
+    use miden_protocol::note::NoteType;
+    use miden_protocol::transaction::{OutputNote, ProvenTransaction, TransactionInputs};
+    use miden_protocol::utils::serde::{Deserializable, Serializable};
+    use miden_tx::TransactionVerifier;
+
+    println!("\n=== Private vs Public P2ID Transfer Comparison ===\n");
+
+    let client = build_testnet_client().await;
+    let client = Arc::new(Mutex::new(client));
+
+    // Sync
+    {
+        let mut c = client.lock().await;
+        let summary = c.sync_state().await.expect("sync with testnet");
+        println!("Synced to block {}\n", summary.block_num);
+    }
+
+    let sender = AccountId::from_hex(WALLET_1).expect("parse wallet 1");
+    let target = AccountId::from_hex(WALLET_2).expect("parse wallet 2");
+    let faucet = AccountId::from_hex(FAUCET_ID).expect("parse faucet");
+    let amount: u64 = 300;
+
+    // ── Helper: create, execute, prove a P2ID with given NoteType ────────
+    // Returns (proven_tx_hex, tx_inputs_hex, prove_time, full_notes_from_result)
+    async fn create_prove_p2id(
+        client: &Arc<Mutex<miden_client::Client<miden_client::keystore::FilesystemKeyStore>>>,
+        sender: AccountId,
+        target: AccountId,
+        faucet: AccountId,
+        amount: u64,
+        note_type: NoteType,
+    ) -> (String, String, std::time::Duration, Vec<miden_protocol::note::Note>) {
+        let asset = FungibleAsset::new(faucet, amount).expect("create asset");
+        let mut client_guard = client.lock().await;
+
+        let payment_data =
+            PaymentNoteDescription::new(vec![Asset::Fungible(asset)], sender, target);
+
+        let tx_request = TransactionRequestBuilder::new()
+            .build_pay_to_id(payment_data, note_type, client_guard.rng())
+            .expect("build P2ID request");
+
+        let tx_result = client_guard
+            .execute_transaction(sender, tx_request)
+            .await
+            .expect("execute transaction");
+
+        // Extract full notes from TransactionResult BEFORE proving.
+        // For private notes, the prover will shrink Full → Header,
+        // so this is the only way to get the full note data.
+        let full_notes: Vec<miden_protocol::note::Note> = tx_result
+            .created_notes()
+            .iter()
+            .filter_map(|on| {
+                if let OutputNote::Full(note) = on {
+                    Some(note.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let tx_inputs = TransactionInputs::from(&tx_result);
+        let tx_inputs_hex = hex::encode(tx_inputs.to_bytes());
+
+        let prover = client_guard.prover();
+        drop(client_guard);
+
+        let t = Instant::now();
+        let proven_tx = prover
+            .prove(tx_result.into())
+            .await
+            .expect("prove transaction");
+        let prove_time = t.elapsed();
+
+        let tx_hex = hex::encode(proven_tx.to_bytes());
+        (tx_hex, tx_inputs_hex, prove_time, full_notes)
+    }
+
+    // ── 1. Create PUBLIC P2ID ────────────────────────────────────────────
+    println!("── Creating PUBLIC P2ID ({amount} tokens) ──");
+    let t_pub = Instant::now();
+    let (pub_hex, _pub_inputs_hex, pub_prove_time, _pub_full_notes) =
+        create_prove_p2id(&client, sender, target, faucet, amount, NoteType::Public).await;
+    let pub_total = t_pub.elapsed();
+    let pub_proof_size = pub_hex.len() / 2;
+    println!(
+        "  Prove: {pub_prove_time:.2?}, Total: {pub_total:.2?}, Proof: {pub_proof_size} bytes"
+    );
+
+    // ── 2. Create PRIVATE P2ID ───────────────────────────────────────────
+    println!("\n── Creating PRIVATE P2ID ({amount} tokens) ──");
+    let t_priv = Instant::now();
+    let (priv_hex, priv_inputs_hex, priv_prove_time, priv_full_notes) =
+        create_prove_p2id(&client, sender, target, faucet, amount, NoteType::Private).await;
+    let priv_total = t_priv.elapsed();
+    let priv_proof_size = priv_hex.len() / 2;
+    println!(
+        "  Prove: {priv_prove_time:.2?}, Total: {priv_total:.2?}, Proof: {priv_proof_size} bytes"
+    );
+
+    // ── 3. Inspect ProvenTransaction output notes ────────────────────────
+    println!("\n── Output Notes in ProvenTransaction ──");
+
+    let pub_proven_bytes = hex::decode(&pub_hex).expect("decode pub hex");
+    let pub_proven =
+        ProvenTransaction::read_from_bytes(&pub_proven_bytes).expect("deserialize pub proven tx");
+
+    let priv_proven_bytes = hex::decode(&priv_hex).expect("decode priv hex");
+    let priv_proven = ProvenTransaction::read_from_bytes(&priv_proven_bytes)
+        .expect("deserialize priv proven tx");
+
+    println!("\n  PUBLIC transaction output notes:");
+    let mut pub_note_ids = vec![];
+    for (i, output_note) in pub_proven.output_notes().iter().enumerate() {
+        let variant = match output_note {
+            OutputNote::Full(note) => {
+                let assets: Vec<String> = note
+                    .assets()
+                    .iter_fungible()
+                    .map(|a| format!("{} from {}", a.amount(), a.faucet_id()))
+                    .collect();
+                format!("Full (assets: [{}], recipient: visible)", assets.join(", "))
+            }
+            OutputNote::Header(_) => "Header (assets: hidden, recipient: hidden)".to_string(),
+            OutputNote::Partial(_) => "Partial".to_string(),
+        };
+        let note_type_str = output_note.metadata().note_type();
+        println!("    [{i}] {variant}  (NoteType: {note_type_str:?}, ID: {})", output_note.id());
+        pub_note_ids.push(output_note.id());
+    }
+
+    println!("\n  PRIVATE transaction output notes:");
+    let mut priv_note_ids = vec![];
+    let mut has_header_only = false;
+    for (i, output_note) in priv_proven.output_notes().iter().enumerate() {
+        let variant = match output_note {
+            OutputNote::Full(note) => {
+                let assets: Vec<String> = note
+                    .assets()
+                    .iter_fungible()
+                    .map(|a| format!("{} from {}", a.amount(), a.faucet_id()))
+                    .collect();
+                format!("Full (assets: [{}], recipient: visible)", assets.join(", "))
+            }
+            OutputNote::Header(_) => {
+                has_header_only = true;
+                "Header (assets: HIDDEN, recipient: HIDDEN)".to_string()
+            }
+            OutputNote::Partial(_) => "Partial".to_string(),
+        };
+        let note_type_str = output_note.metadata().note_type();
+        println!("    [{i}] {variant}  (NoteType: {note_type_str:?}, ID: {})", output_note.id());
+        priv_note_ids.push(output_note.id());
+    }
+
+    assert!(
+        has_header_only,
+        "Private P2ID should produce OutputNote::Header (not Full) in ProvenTransaction"
+    );
+
+    // Verify public notes are Full
+    for output_note in pub_proven.output_notes().iter() {
+        if output_note.metadata().note_type() == NoteType::Public {
+            assert!(
+                matches!(output_note, OutputNote::Full(_)),
+                "Public notes should remain OutputNote::Full"
+            );
+        }
+    }
+
+    // ── 4. Verify STARK proofs for both ──────────────────────────────────
+    println!("\n── STARK Proof Verification ──");
+    let verifier = TransactionVerifier::new(96);
+
+    let t = Instant::now();
+    verifier.verify(&pub_proven).expect("public STARK proof valid");
+    let pub_verify = t.elapsed();
+
+    let t = Instant::now();
+    verifier.verify(&priv_proven).expect("private STARK proof valid");
+    let priv_verify = t.elapsed();
+
+    println!("  Public verify:  {pub_verify:.2?}");
+    println!("  Private verify: {priv_verify:.2?}");
+
+    // ── 5. Off-chain note delivery for private notes ─────────────────────
+    println!("\n── Off-chain Note Delivery ──");
+    println!(
+        "  Full notes extracted from TransactionResult BEFORE proving: {}",
+        priv_full_notes.len()
+    );
+    for note in &priv_full_notes {
+        let assets: Vec<String> = note
+            .assets()
+            .iter_fungible()
+            .map(|a| format!("{} tokens", a.amount()))
+            .collect();
+        println!(
+            "    Note ID: {} | Assets: [{}] | Recipient visible: yes (off-chain only)",
+            note.id(),
+            assets.join(", ")
+        );
+    }
+    println!(
+        "  → Recipient must receive full note data OFF-CHAIN (e.g., P2P relay, direct message)"
+    );
+    println!(
+        "  → The ProvenTransaction on-chain only contains the note header (hash commitment)"
+    );
+
+    // ── 6. Submit private transfer to network ────────────────────────────
+    println!("\n── Submitting PRIVATE transaction to Miden node ──");
+    let config = MidenChainConfig {
+        chain_reference: MidenChainReference::testnet(),
+        rpc_url: "https://rpc.testnet.miden.io".to_string(),
+    };
+    let provider = MidenChainProvider::from_config(&config);
+
+    let priv_tx_bytes = hex::decode(&priv_hex).expect("decode priv hex");
+    let priv_inputs_bytes = hex::decode(&priv_inputs_hex).expect("decode priv inputs hex");
+
+    let t_submit = Instant::now();
+    let submitted_tx_id = provider
+        .submit_proven_transaction(&priv_tx_bytes, &priv_inputs_bytes)
+        .await
+        .expect("submit private proven transaction");
+    let submit_time = t_submit.elapsed();
+    println!("  Submitted in {submit_time:.2?}");
+    println!("  TX ID: {submitted_tx_id}");
+
+    // ── 7. Query notes from network to verify visibility ─────────────────
+    println!("\n── On-chain Note Visibility (via get_notes_by_id RPC) ──");
+
+    // Sync to pick up the submitted transaction
+    {
+        let mut c = client.lock().await;
+        c.sync_state().await.expect("post-submit sync");
+    }
+
+    // Use a standalone GrpcClient for note queries (Client doesn't expose rpc_api publicly)
+    use miden_client::rpc::{Endpoint as RpcEndpoint, GrpcClient};
+    use miden_client::rpc::domain::note::FetchedNote;
+    use miden_protocol::block::BlockNumber;
+
+    let rpc = GrpcClient::new(&RpcEndpoint::testnet(), 10_000);
+    // Must set genesis commitment before queries
+    let (genesis_header, _) = rpc
+        .get_block_header_by_number(Some(BlockNumber::GENESIS), false)
+        .await
+        .expect("fetch genesis");
+    rpc.set_genesis_commitment(genesis_header.commitment())
+        .await
+        .expect("set genesis commitment");
+
+    // Query the public note IDs
+    if !pub_note_ids.is_empty() {
+        match rpc.get_notes_by_id(&pub_note_ids).await {
+            Ok(fetched) => {
+                for note in &fetched {
+                    let kind = match note {
+                        FetchedNote::Public(_, _) => "Public (FULL data on-chain)",
+                        FetchedNote::Private(_, _) => "Private (header only on-chain)",
+                    };
+                    println!("    Public TX note → {kind} | ID: {}", note.id());
+                }
+            }
+            Err(e) => println!("    Public notes query: {e} (notes may not be committed yet)"),
+        }
+    }
+
+    // Query the private note IDs
+    if !priv_note_ids.is_empty() {
+        match rpc.get_notes_by_id(&priv_note_ids).await {
+            Ok(fetched) => {
+                for note in &fetched {
+                    let kind = match note {
+                        FetchedNote::Public(_, _) => "Public (FULL data on-chain)",
+                        FetchedNote::Private(_, _) => "Private (header only on-chain)",
+                    };
+                    println!("    Private TX note → {kind} | ID: {}", note.id());
+                }
+            }
+            Err(e) => println!("    Private notes query: {e} (notes may not be committed yet)"),
+        }
+    }
+
+    // ── Summary ──────────────────────────────────────────────────────────
+    println!("\n╔══════════════════════════════════════════════════════════════╗");
+    println!("║           PUBLIC vs PRIVATE P2ID COMPARISON                 ║");
+    println!("╠══════════════════════════════════════════════════════════════╣");
+    println!(
+        "║  Proof size:     Public={pub_proof_size:>6} B │ Private={priv_proof_size:>6} B  ║"
+    );
+    println!(
+        "║  Prove time:     Public={:>7.2?} │ Private={:>7.2?}  ║",
+        pub_prove_time, priv_prove_time
+    );
+    println!(
+        "║  Verify time:    Public={:>7.2?} │ Private={:>7.2?}  ║",
+        pub_verify, priv_verify
+    );
+    println!("║                                                              ║");
+    println!("║  On-chain data:                                              ║");
+    println!("║    Public note:  Full (assets + recipient visible)           ║");
+    println!("║    Private note: Header only (hash commitment)               ║");
+    println!("║                                                              ║");
+    println!("║  Consume flow:                                               ║");
+    println!("║    Public:  Recipient syncs, sees note on-chain, consumes    ║");
+    println!("║    Private: Recipient needs OFF-CHAIN delivery of full note  ║");
+    println!("║             (P2P relay, direct message, etc.)                ║");
+    println!("║                                                              ║");
+    println!("║  x402 implication:                                           ║");
+    println!("║    Facilitator CANNOT verify private notes (no Full data).   ║");
+    println!("║    x402 payments MUST use NoteType::Public for verification. ║");
+    println!("╚══════════════════════════════════════════════════════════════╝\n");
+}
+
+// ============================================================================
 // Benchmark: STARK proof generation
 // ============================================================================
 
