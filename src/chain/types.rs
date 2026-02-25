@@ -84,12 +84,39 @@ impl<'de> Deserialize<'de> for MidenAccountAddress {
     }
 }
 
+/// Conversion methods for interoperating with the miden-protocol `AccountId` type.
+///
+/// These methods are only available when the `miden-native` feature is enabled.
+#[cfg(feature = "miden-native")]
+impl MidenAccountAddress {
+    /// Converts this address to a miden-protocol `AccountId`.
+    ///
+    /// Parses the hex-encoded account ID using `AccountId::from_hex`.
+    pub fn to_account_id(&self) -> Result<miden_protocol::account::AccountId, MidenAddressParseError> {
+        let hex_str = self.to_hex();
+        miden_protocol::account::AccountId::from_hex(&hex_str)
+            .map_err(|e| MidenAddressParseError::InvalidAccountId(e.to_string()))
+    }
+
+    /// Creates a `MidenAccountAddress` from a miden-protocol `AccountId`.
+    pub fn from_account_id(id: miden_protocol::account::AccountId) -> Self {
+        let hex_str = id.to_hex();
+        // to_hex returns "0x..." prefixed string
+        hex_str.parse().expect("AccountId::to_hex always produces valid hex")
+    }
+}
+
 /// Error returned when parsing a Miden account address.
 #[derive(Debug, thiserror::Error)]
 pub enum MidenAddressParseError {
     /// The hex string is invalid.
     #[error("Invalid hex: {0}")]
     InvalidHex(String),
+
+    /// The account ID is invalid (wrong length, checksum, etc.).
+    #[cfg(feature = "miden-native")]
+    #[error("Invalid account ID: {0}")]
+    InvalidAccountId(String),
 }
 
 // ============================================================================

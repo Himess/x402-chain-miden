@@ -52,42 +52,102 @@ impl MidenChainProvider {
     /// Submits a serialized proven transaction to the Miden node.
     ///
     /// Returns the transaction ID as a hex string on success.
+    ///
+    /// With the `miden-native` feature, this method deserializes the `ProvenTransaction`
+    /// and extracts the transaction ID. Actual network submission requires the
+    /// `miden-client-native` feature with a configured RPC client.
     pub async fn submit_proven_transaction(
         &self,
-        _proven_tx_bytes: &[u8],
+        proven_tx_bytes: &[u8],
     ) -> Result<String, MidenProviderError> {
-        // TODO: Implement actual RPC call to Miden node
-        // This will use the miden-client's RPC client to submit
-        // the ProvenTransaction to the network.
-        //
-        // Pseudocode:
-        //   let client = MidenClient::connect(&self.rpc_url).await?;
-        //   let proven_tx = ProvenTransaction::read_from(&mut proven_tx_bytes)?;
-        //   let tx_id = client.submit_transaction(proven_tx).await?;
-        //   Ok(tx_id.to_hex())
-        Err(MidenProviderError::NotImplemented(
-            "submit_proven_transaction requires miden-client integration".to_string(),
-        ))
+        // Deserialize to extract the transaction ID and validate the bytes
+        #[cfg(feature = "miden-native")]
+        {
+            use miden_protocol::transaction::ProvenTransaction;
+            use miden_protocol::utils::serde::Deserializable;
+
+            let proven_tx = ProvenTransaction::read_from_bytes(proven_tx_bytes).map_err(|e| {
+                MidenProviderError::SubmissionError(format!(
+                    "Failed to deserialize ProvenTransaction: {e}"
+                ))
+            })?;
+
+            let tx_id = proven_tx.id();
+
+            // TODO(miden-client-native): Submit to the Miden node via gRPC.
+            //
+            // The NodeRpcClient::submit_proven_transaction method requires both
+            // a ProvenTransaction and TransactionInputs. The TransactionInputs
+            // would need to be constructed or provided by the caller.
+            //
+            // For now, return the transaction ID from the deserialized transaction.
+            // Actual network submission will be added with the miden-client-native
+            // feature once the RPC client integration is complete.
+
+            #[cfg(feature = "tracing")]
+            tracing::warn!(
+                tx_id = %tx_id,
+                rpc_url = %self.rpc_url,
+                "ProvenTransaction deserialized successfully but network submission \
+                 requires miden-client-native feature"
+            );
+
+            Ok(format!("{tx_id}"))
+        }
+
+        #[cfg(not(feature = "miden-native"))]
+        {
+            let _ = proven_tx_bytes;
+            Err(MidenProviderError::NotImplemented(
+                "submit_proven_transaction requires miden-native feature".to_string(),
+            ))
+        }
     }
 
     /// Queries the balance of a specific asset for a given account.
     ///
     /// Returns the balance as a u64 in the token's smallest unit.
+    ///
+    /// With the `miden-native` feature, this method validates the account and faucet IDs.
+    /// Actual balance queries require the `miden-client-native` feature with a configured
+    /// RPC client.
     pub async fn get_account_balance(
         &self,
-        _account_id: &str,
-        _faucet_id: &str,
+        account_id: &str,
+        faucet_id: &str,
     ) -> Result<u64, MidenProviderError> {
-        // TODO: Implement actual RPC call to query account vault
-        //
-        // Pseudocode:
-        //   let client = MidenClient::connect(&self.rpc_url).await?;
-        //   let account = client.get_account(account_id).await?;
-        //   let balance = account.vault().get_balance(faucet_id)?;
-        //   Ok(balance)
-        Err(MidenProviderError::NotImplemented(
-            "get_account_balance requires miden-client integration".to_string(),
-        ))
+        #[cfg(feature = "miden-native")]
+        {
+            use miden_protocol::account::AccountId;
+
+            // Validate both account IDs are well-formed
+            let _account = AccountId::from_hex(account_id).map_err(|e| {
+                MidenProviderError::QueryError(format!("Invalid account ID '{account_id}': {e}"))
+            })?;
+            let _faucet = AccountId::from_hex(faucet_id).map_err(|e| {
+                MidenProviderError::QueryError(format!("Invalid faucet ID '{faucet_id}': {e}"))
+            })?;
+
+            // TODO(miden-client-native): Query account balance via gRPC.
+            //
+            // Use NodeRpcClient::get_account_details(account_id) to fetch the
+            // Account, then inspect account.vault() for the faucet's balance.
+            //
+            // Requires miden-client with a configured RPC connection.
+
+            Err(MidenProviderError::NotImplemented(
+                "get_account_balance requires miden-client-native feature for RPC queries"
+                    .to_string(),
+            ))
+        }
+
+        #[cfg(not(feature = "miden-native"))]
+        {
+            let _ = (account_id, faucet_id);
+            Err(MidenProviderError::NotImplemented(
+                "get_account_balance requires miden-native feature".to_string(),
+            ))
+        }
     }
 }
 

@@ -138,6 +138,126 @@ where
     }
 }
 
+// ============================================================================
+// MidenClientSigner — real signer using miden-client
+// ============================================================================
+
+/// A signer backed by a `miden_client::Client` that creates P2ID notes,
+/// executes them in the Miden VM, generates STARK proofs, and serializes
+/// the resulting `ProvenTransaction`.
+///
+/// This requires the `miden-client-native` feature flag.
+///
+/// # Example
+///
+/// ```ignore
+/// use x402_chain_miden::v2_miden_exact::client::MidenClientSigner;
+///
+/// let signer = MidenClientSigner::new(client, sender_account_id);
+/// let x402_client = V2MidenExactClient::new(signer);
+/// ```
+#[cfg(feature = "miden-client-native")]
+pub struct MidenClientSigner {
+    account_id_hex: String,
+    // TODO: Hold a reference or Arc to miden_client::Client once
+    // the store/keystore/RPC configuration story is finalized.
+    //
+    // The miden_client::Client requires:
+    //   - A Store impl (SqliteStore or custom)
+    //   - A KeyStore impl
+    //   - A NodeRpcClient impl
+    //
+    // These are heavyweight dependencies, so the signer will likely
+    // accept an Arc<Client<...>> or be constructed from a builder.
+}
+
+#[cfg(feature = "miden-client-native")]
+impl MidenClientSigner {
+    /// Creates a new signer for the given account ID.
+    ///
+    /// The `account_id_hex` should be the hex-encoded Miden account ID
+    /// (with or without `0x` prefix) of the sender account.
+    pub fn new(account_id_hex: impl Into<String>) -> Self {
+        Self {
+            account_id_hex: account_id_hex.into(),
+        }
+    }
+}
+
+#[cfg(feature = "miden-client-native")]
+impl std::fmt::Debug for MidenClientSigner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MidenClientSigner")
+            .field("account_id_hex", &self.account_id_hex)
+            .finish()
+    }
+}
+
+#[cfg(feature = "miden-client-native")]
+impl Clone for MidenClientSigner {
+    fn clone(&self) -> Self {
+        Self {
+            account_id_hex: self.account_id_hex.clone(),
+        }
+    }
+}
+
+#[cfg(feature = "miden-client-native")]
+#[async_trait]
+impl MidenSignerLike for MidenClientSigner {
+    fn account_id(&self) -> String {
+        self.account_id_hex.clone()
+    }
+
+    async fn create_and_prove_p2id(
+        &self,
+        _recipient: &str,
+        _faucet_id: &str,
+        _amount: u64,
+    ) -> Result<(String, String), X402Error> {
+        // TODO: Implement using miden_client::Client.
+        //
+        // The full flow would be:
+        //
+        // 1. Parse sender, recipient, and faucet AccountIds:
+        //    let sender = AccountId::from_hex(&self.account_id_hex)?;
+        //    let target = AccountId::from_hex(recipient)?;
+        //    let faucet = AccountId::from_hex(faucet_id)?;
+        //
+        // 2. Create a FungibleAsset:
+        //    let asset = FungibleAsset::new(faucet, amount)?;
+        //
+        // 3. Create a P2ID note using miden_standards::note::P2idNote::create():
+        //    let note = P2idNote::create(
+        //        sender, target,
+        //        vec![Asset::Fungible(asset)],
+        //        NoteType::Public,  // Must be public for facilitator verification
+        //        NoteAttachment::empty(),
+        //        &mut rng,
+        //    )?;
+        //
+        // 4. Build TransactionRequest with the output note:
+        //    let tx_request = TransactionRequest::new()
+        //        .with_output_notes(vec![OutputNote::Full(note)]);
+        //
+        // 5. Execute and prove the transaction:
+        //    let proven_tx = client.prove_transaction(sender, tx_request).await?;
+        //
+        // 6. Serialize the ProvenTransaction:
+        //    let tx_bytes = proven_tx.to_bytes();
+        //    let tx_hex = hex::encode(&tx_bytes);
+        //    let tx_id = format!("{}", proven_tx.id());
+        //
+        // 7. Return (tx_hex, tx_id)
+
+        Err(X402Error::SigningError(
+            "MidenClientSigner::create_and_prove_p2id not yet implemented — \
+             requires miden_client::Client integration"
+                .to_string(),
+        ))
+    }
+}
+
 /// Internal signer that creates and proves Miden P2ID payments.
 struct MidenPayloadSigner<S> {
     signer: S,

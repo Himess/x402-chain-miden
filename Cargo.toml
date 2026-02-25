@@ -8,7 +8,7 @@ authors = ["Himess"]
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/Himess/x402-chain-miden"
-rust-version = "1.88.0"
+rust-version = "1.90.0"
 
 [package]
 name = "x402-chain-miden"
@@ -28,10 +28,12 @@ all-features = true
 
 [features]
 default = []
-client = ["async-trait", "rand", "alloy-primitives"]
+client = ["async-trait", "alloy-primitives"]
 server = []
-facilitator = ["async-trait", "tokio", "url"]
+facilitator = ["async-trait", "tokio"]
 full = ["client", "server", "facilitator"]
+miden-native = ["dep:miden-protocol", "dep:miden-tx", "dep:miden-standards", "tracing"]
+miden-client-native = ["miden-native", "dep:miden-client"]
 
 [dependencies]
 x402-types = { version = "1.0" }
@@ -40,7 +42,10 @@ serde_json = { version = "1.0", features = ["raw_value"] }
 thiserror = { version = "2.0" }
 async-trait = { version = "0.1", optional = true }
 tokio = { version = "1.35", features = ["sync"], optional = true }
-url = { version = "2.5", features = ["serde"], optional = true }
-rand = { version = "0.9", optional = true }
 hex = { version = "0.4" }
 alloy-primitives = { version = "1.4", optional = true }
+miden-protocol = { version = "0.13", optional = true, default-features = false, features = ["std"] }
+miden-tx = { version = "0.13", optional = true, default-features = false, features = ["std"] }
+miden-standards = { version = "0.13", optional = true, default-features = false, features = ["std"] }
+miden-client = { version = "0.13", optional = true, default-features = false, features = ["std"] }
+tracing = { version = "0.1", optional = true }

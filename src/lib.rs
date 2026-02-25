@@ -19,6 +19,8 @@
 //! - `server` - Server-side price tag generation
 //! - `client` - Client-side payment signing (P2ID note creation + proving)
 //! - `facilitator` - Facilitator-side payment verification and settlement
+//! - `miden-native` - Real STARK proof verification using `miden-tx` and `miden-protocol`
+//! - `miden-client-native` - Full miden-client integration (includes `miden-native`)
 //!
 //! # Usage
 //!
@@ -54,3 +56,6 @@ pub use v2_miden_exact::V2MidenExact;
 
 #[cfg(feature = "client")]
 pub use v2_miden_exact::client::V2MidenExactClient;
+
+#[cfg(all(feature = "client", feature = "miden-client-native"))]
+pub use v2_miden_exact::client::MidenClientSigner;

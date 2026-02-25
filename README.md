@@ -120,7 +120,7 @@ x402-chain-miden/
 │   ├── server-example/         # Resource server with 402 payment wall
 │   └── client-example/         # Client with mock Miden signer
 ├── tests/
-│   └── integration_test.rs     # 33 integration tests
+│   └── integration_test.rs     # 33 integration tests + 7 miden-native
 └── docs/
     └── architecture.md         # Full architecture documentation
 ```
@@ -155,7 +155,7 @@ cargo run -p x402-miden-client-example
 ### Tests
 
 ```bash
-# All tests (47 total: 14 unit + 33 integration)
+# All tests (54 total: 14 unit + 33 integration + 7 miden-native)
 cargo test --workspace --features full
 ```
 

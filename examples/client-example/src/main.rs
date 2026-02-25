@@ -86,6 +86,7 @@ impl MidenSignerLike for MockMidenSigner {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PaymentRequired {
     x402_version: u8,
     error: Option<String>,

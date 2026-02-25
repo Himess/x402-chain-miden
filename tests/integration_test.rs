@@ -405,7 +405,7 @@ mod error_tests {
     fn test_error_variants() {
         // Ensure all error variants are constructible
         let _ = MidenExactError::InvalidProof("bad proof".to_string());
-        let _ = MidenExactError::PaymentNotFound;
+        let _ = MidenExactError::PaymentNotFound("test".to_string());
         let _ = MidenExactError::RecipientMismatch {
             expected: "a".to_string(),
             got: "b".to_string(),
@@ -414,7 +414,7 @@ mod error_tests {
             required: "100".to_string(),
             got: "50".to_string(),
         };
-        let _ = MidenExactError::TransactionExpired;
+        let _ = MidenExactError::TransactionExpired(0u64);
         let _ = MidenExactError::DeserializationError("parse fail".to_string());
         let _ = MidenExactError::AcceptedRequirementsMismatch;
         let _ = MidenExactError::ProviderError("rpc fail".to_string());

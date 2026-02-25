@@ -86,20 +86,11 @@ impl X402SchemeFacilitator for V2MidenExactFacilitator {
     }
 }
 
-/// Verifies a Miden payment payload.
-///
-/// This function:
-/// 1. Checks that the accepted requirements match the provided requirements
-/// 2. Verifies the STARK proof in the proven transaction
-/// 3. Checks that the output notes contain the expected P2ID payment
-/// 4. Returns the verified payer account ID
-async fn verify_miden_payment(
-    request: &types::FacilitatorVerifyRequest,
-) -> Result<v2::VerifyResponse, MidenExactError> {
-    let payload = &request.payment_payload;
-    let requirements = &request.payment_requirements;
-
-    // Check that accepted requirements match provided requirements
+/// Checks that accepted requirements match provided requirements.
+fn check_requirements_match(
+    payload: &types::PaymentPayload,
+    requirements: &types::PaymentRequirements,
+) -> Result<(), MidenExactError> {
     let accepted = &payload.accepted;
     if accepted.network != requirements.network {
         return Err(MidenExactError::ChainIdMismatch {
@@ -113,37 +104,137 @@ async fn verify_miden_payment(
             got: accepted.pay_to.to_string(),
         });
     }
+    Ok(())
+}
+
+/// Verifies a Miden payment payload using real STARK proof verification.
+///
+/// This implementation:
+/// 1. Checks that the accepted requirements match the provided requirements
+/// 2. Deserializes the `ProvenTransaction` from the hex payload
+/// 3. Verifies the STARK proof using `TransactionVerifier`
+/// 4. Checks that the output notes contain a P2ID payment to the correct recipient
+///    with the correct faucet and amount
+/// 5. Returns the verified payer account ID
+#[cfg(feature = "miden-native")]
+async fn verify_miden_payment(
+    request: &types::FacilitatorVerifyRequest,
+) -> Result<v2::VerifyResponse, MidenExactError> {
+    use crate::chain::MidenAccountAddress;
+    use miden_protocol::transaction::{OutputNote, ProvenTransaction};
+    use miden_protocol::utils::serde::Deserializable;
+    use miden_standards::note::P2idNoteStorage;
+    use miden_tx::TransactionVerifier;
+
+    let payload = &request.payment_payload;
+    let requirements = &request.payment_requirements;
+
+    check_requirements_match(payload, requirements)?;
 
     let miden_payload = &payload.payload;
 
-    // TODO: Deserialize proven_transaction and verify STARK proof
-    //
-    // Steps that will be implemented with miden-tx dependency:
-    //
-    // 1. Deserialize ProvenTransaction from hex bytes:
-    //    let proven_tx = ProvenTransaction::read_from(&mut bytes)?;
-    //
-    // 2. Verify STARK proof:
-    //    let verifier = TransactionVerifier::new();
-    //    verifier.verify(&proven_tx)?;
-    //
-    // 3. Check output notes contain P2ID to correct recipient:
-    //    for note in proven_tx.output_notes() {
-    //        if note.metadata().recipient() == pay_to
-    //           && note.assets().contains(faucet_id, amount) {
-    //            payment_found = true;
-    //        }
-    //    }
-    //
-    // 4. Check expiration:
-    //    if proven_tx.expiration_block_num() < current_block {
-    //        return Err(TransactionExpired(...));
-    //    }
+    // 1. Decode hex → bytes
+    let proven_tx_bytes = hex::decode(&miden_payload.proven_transaction).map_err(|e| {
+        MidenExactError::DeserializationError(format!("Invalid hex in proven_transaction: {e}"))
+    })?;
 
-    // For now, return the payer from the payload
-    let payer = miden_payload.from.to_string();
+    // 2. Deserialize ProvenTransaction
+    let proven_tx = ProvenTransaction::read_from_bytes(&proven_tx_bytes).map_err(|e| {
+        MidenExactError::DeserializationError(format!("Failed to deserialize ProvenTransaction: {e}"))
+    })?;
+
+    // 3. Verify STARK proof (security level 96 = standard)
+    let verifier = TransactionVerifier::new(96);
+    verifier.verify(&proven_tx).map_err(|e| {
+        MidenExactError::InvalidProof(format!("STARK proof verification failed: {e}"))
+    })?;
+
+    // 4. Check output notes for P2ID payment to correct recipient with correct amount
+    let required_recipient = requirements.pay_to.to_account_id().map_err(|e| {
+        MidenExactError::DeserializationError(format!("Invalid pay_to account ID: {e}"))
+    })?;
+
+    let required_faucet = requirements.asset.to_account_id().map_err(|e| {
+        MidenExactError::DeserializationError(format!("Invalid asset/faucet account ID: {e}"))
+    })?;
+
+    let required_amount: u64 = requirements
+        .amount
+        .parse()
+        .map_err(|_| MidenExactError::DeserializationError("Invalid amount".to_string()))?;
+
+    let mut payment_found = false;
+
+    for output_note in proven_tx.output_notes().iter() {
+        // Only Full output notes can be inspected (public notes)
+        if let OutputNote::Full(note) = output_note {
+            // Check if this is a P2ID note by comparing script roots
+            let script_root = note.recipient().script().root();
+            if script_root != miden_standards::note::P2idNote::script_root() {
+                continue;
+            }
+
+            // Parse P2ID storage to get target account ID
+            let p2id_storage = match P2idNoteStorage::try_from(note.recipient().storage().items()) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            if p2id_storage.target() != required_recipient {
+                continue;
+            }
+
+            // Check assets for the required fungible asset
+            for fungible in note.assets().iter_fungible() {
+                if fungible.faucet_id() == required_faucet && fungible.amount() >= required_amount {
+                    payment_found = true;
+                    break;
+                }
+            }
+
+            if payment_found {
+                break;
+            }
+        }
+    }
+
+    if !payment_found {
+        return Err(MidenExactError::PaymentNotFound(
+            "No P2ID output note found matching the required recipient, faucet, and amount. \
+             Note: only NoteType::Public notes can be verified."
+                .to_string(),
+        ));
+    }
+
+    let payer = MidenAccountAddress::from_account_id(proven_tx.account_id()).to_string();
 
     Ok(v2::VerifyResponse::valid(payer))
+}
+
+/// Stub verification for when miden-native feature is not enabled.
+///
+/// Rejects all payments because STARK proof verification is unavailable
+/// without the miden-native feature.
+#[cfg(not(feature = "miden-native"))]
+async fn verify_miden_payment(
+    request: &types::FacilitatorVerifyRequest,
+) -> Result<v2::VerifyResponse, MidenExactError> {
+    let payload = &request.payment_payload;
+    let requirements = &request.payment_requirements;
+
+    check_requirements_match(payload, requirements)?;
+
+    #[cfg(feature = "tracing")]
+    tracing::error!(
+        "miden-native feature not enabled — cannot verify STARK proofs. \
+         Enable the miden-native feature for production use."
+    );
+
+    Err(MidenExactError::InvalidProof(
+        "STARK proof verification unavailable: miden-native feature not enabled. \
+         Cannot accept payments without cryptographic verification."
+            .to_string(),
+    ))
 }
 
 /// Settles a Miden payment by submitting the proven transaction.
