@@ -53,14 +53,12 @@ pub const TESTNET_FAUCET_ENV: &str = "MIDEN_TESTNET_FAUCET_ID";
 /// Default testnet faucet ID.
 ///
 /// This is the public fungible-token faucet deployed on Miden testnet.
-/// Obtain the current faucet ID by running:
-///   `miden-client sync && miden-client account list`
-/// after minting from <https://faucet.testnet.miden.io>.
+/// Faucet metadata: <https://faucet-api-testnet-miden.eu-central-8.gateway.fm/get_metadata>
+/// Faucet UI: <https://faucet.testnet.miden.io>
 ///
-/// TODO(testnet): Replace with the canonical testnet faucet ID once stable.
-///   The faucet ID changes across testnet resets. Override at runtime via
-///   the `MIDEN_TESTNET_FAUCET_ID` environment variable.
-const DEFAULT_TESTNET_FAUCET_HEX: &str = "0x0000000000000000000000000000000000";
+/// Note: This faucet ID may change across testnet resets. Override at runtime
+/// via the `MIDEN_TESTNET_FAUCET_ID` environment variable if needed.
+const DEFAULT_TESTNET_FAUCET_HEX: &str = "0x37d5977a8e16d8205a360820f0230f";
 
 fn testnet_faucet_id() -> MidenAccountAddress {
     std::env::var(TESTNET_FAUCET_ENV)
