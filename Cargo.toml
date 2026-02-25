@@ -52,3 +52,5 @@ tracing = { version = "0.1", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1.35", features = ["macros", "rt-multi-thread"] }
+miden-client-sqlite-store = { version = "0.13" }
+rand = { version = "0.9" }

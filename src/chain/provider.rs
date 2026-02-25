@@ -63,6 +63,39 @@ impl MidenChainProvider {
         &self.rpc_url
     }
 
+    /// Ensures the gRPC client has the genesis commitment set.
+    ///
+    /// The Miden node validates the genesis commitment in request headers.
+    /// This fetches the genesis block header from the node and sets the
+    /// commitment on the gRPC client. Subsequent calls are no-ops since
+    /// `set_genesis_commitment` is idempotent.
+    #[cfg(feature = "miden-client-native")]
+    async fn ensure_genesis_commitment(&self) -> Result<(), MidenProviderError> {
+        use miden_client::rpc::NodeRpcClient;
+        use miden_protocol::block::BlockNumber;
+
+        let (genesis_header, _) = self
+            .rpc_client
+            .get_block_header_by_number(Some(BlockNumber::GENESIS), false)
+            .await
+            .map_err(|e| {
+                MidenProviderError::ConnectionError(format!(
+                    "Failed to fetch genesis block header: {e}"
+                ))
+            })?;
+
+        self.rpc_client
+            .set_genesis_commitment(genesis_header.commitment())
+            .await
+            .map_err(|e| {
+                MidenProviderError::ConnectionError(format!(
+                    "Failed to set genesis commitment: {e}"
+                ))
+            })?;
+
+        Ok(())
+    }
+
     /// Submits a serialized proven transaction to the Miden node.
     ///
     /// Returns the transaction ID as a hex string on success.
@@ -81,6 +114,9 @@ impl MidenChainProvider {
             use miden_client::rpc::NodeRpcClient;
             use miden_protocol::transaction::{ProvenTransaction, TransactionInputs};
             use miden_protocol::utils::serde::Deserializable;
+
+            // Ensure genesis commitment is set before submitting
+            self.ensure_genesis_commitment().await?;
 
             let proven_tx = ProvenTransaction::read_from_bytes(proven_tx_bytes).map_err(|e| {
                 MidenProviderError::SubmissionError(format!(
@@ -174,6 +210,9 @@ impl MidenChainProvider {
         {
             use miden_client::rpc::NodeRpcClient;
             use miden_protocol::account::AccountId;
+
+            // Ensure genesis commitment is set before querying
+            self.ensure_genesis_commitment().await?;
 
             let account = AccountId::from_hex(account_id).map_err(|e| {
                 MidenProviderError::QueryError(format!("Invalid account ID '{account_id}': {e}"))
