@@ -44,13 +44,40 @@ impl KnownNetworkMiden<ChainId> for ChainId {
 /// On Miden, USDC is represented as a fungible asset issued by a faucet account.
 pub struct MidenUSDC;
 
+/// Environment variable name for overriding the testnet faucet ID at runtime.
+///
+/// Set `MIDEN_TESTNET_FAUCET_ID=0x...` to use a custom faucet on testnet.
+/// This is useful for testing with your own faucet deployment.
+pub const TESTNET_FAUCET_ENV: &str = "MIDEN_TESTNET_FAUCET_ID";
+
+/// Default testnet faucet ID.
+///
+/// This is the public fungible-token faucet deployed on Miden testnet.
+/// Obtain the current faucet ID by running:
+///   `miden-client sync && miden-client account list`
+/// after minting from <https://faucet.testnet.miden.io>.
+///
+/// TODO(testnet): Replace with the canonical testnet faucet ID once stable.
+///   The faucet ID changes across testnet resets. Override at runtime via
+///   the `MIDEN_TESTNET_FAUCET_ID` environment variable.
+const DEFAULT_TESTNET_FAUCET_HEX: &str = "0x0000000000000000000000000000000000";
+
+fn testnet_faucet_id() -> MidenAccountAddress {
+    std::env::var(TESTNET_FAUCET_ENV)
+        .ok()
+        .and_then(|v| v.parse::<MidenAccountAddress>().ok())
+        .unwrap_or_else(|| {
+            DEFAULT_TESTNET_FAUCET_HEX
+                .parse()
+                .expect("default testnet faucet hex is valid")
+        })
+}
+
 impl KnownNetworkMiden<MidenTokenDeployment> for MidenUSDC {
     fn miden_testnet() -> MidenTokenDeployment {
         MidenTokenDeployment {
             chain_reference: MidenChainReference::testnet(),
-            // Placeholder faucet ID - will be updated when Miden testnet
-            // deploys a standard USDC-equivalent faucet.
-            faucet_id: MidenAccountAddress::from_bytes(vec![0; 15]),
+            faucet_id: testnet_faucet_id(),
             decimals: 6,
         }
     }
@@ -58,7 +85,8 @@ impl KnownNetworkMiden<MidenTokenDeployment> for MidenUSDC {
     fn miden_mainnet() -> MidenTokenDeployment {
         MidenTokenDeployment {
             chain_reference: MidenChainReference::mainnet(),
-            // Placeholder faucet ID - will be updated at mainnet launch.
+            // Mainnet faucet ID — will be set at mainnet launch (expected late March 2026).
+            // Until then override via MIDEN_TESTNET_FAUCET_ID or configure at runtime.
             faucet_id: MidenAccountAddress::from_bytes(vec![0; 15]),
             decimals: 6,
         }

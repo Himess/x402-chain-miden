@@ -3,9 +3,6 @@
 //! These tests verify the integration with miden-protocol, miden-tx, and miden-standards
 //! crates. They are gated behind `#[cfg(feature = "miden-native")]` so they only run
 //! when the miden SDK dependencies are available.
-//!
-//! Note: These tests will NOT run on Windows due to the `winter-air` `aux.rs` reserved
-//! filename issue. They should be run on Linux/macOS or in CI.
 
 #![cfg(feature = "miden-native")]
 
@@ -23,7 +20,6 @@ fn test_account_id_roundtrip() {
         AccountId, AccountIdVersion, AccountStorageMode, AccountType,
     };
 
-    // Create a valid AccountId using the dummy constructor
     let original = AccountId::dummy(
         [42u8; 15],
         AccountIdVersion::Version0,
@@ -31,10 +27,7 @@ fn test_account_id_roundtrip() {
         AccountStorageMode::Public,
     );
 
-    // Convert to MidenAccountAddress
     let addr = MidenAccountAddress::from_account_id(original);
-
-    // Convert back to AccountId
     let recovered = addr.to_account_id().expect("should parse back to AccountId");
 
     assert_eq!(original, recovered);
@@ -57,9 +50,7 @@ fn test_from_account_id_hex_format() {
     let addr = MidenAccountAddress::from_account_id(id);
     let hex = addr.to_hex();
 
-    // Should start with "0x"
     assert!(hex.starts_with("0x"), "Expected 0x prefix, got: {hex}");
-    // Should be valid hex after prefix
     let without_prefix = hex.strip_prefix("0x").unwrap();
     assert!(
         hex::decode(without_prefix).is_ok(),
@@ -84,8 +75,6 @@ fn test_proven_transaction_serde_roundtrip() {
     use miden_protocol::vm::ExecutionProof;
     use miden_protocol::Word;
 
-    // Build a minimal ProvenTransaction for testing deserialization.
-    // This uses the builder pattern from the protocol crate.
     let account_id = AccountId::dummy(
         [1; 15],
         AccountIdVersion::Version0,
@@ -93,40 +82,30 @@ fn test_proven_transaction_serde_roundtrip() {
         AccountStorageMode::Private,
     );
 
-    let initial = [2u8; 32]
-        .try_into()
-        .expect("valid initial commitment");
-    let final_commit = [3u8; 32]
-        .try_into()
-        .expect("valid final commitment");
-    let delta_commit = [4u8; 32]
-        .try_into()
-        .expect("valid delta commitment");
-    let ref_block_num = BlockNumber::from(1);
-    let ref_block_commitment = Word::default();
-    let expiration = BlockNumber::from(100);
-    let proof = ExecutionProof::new_dummy();
-    let fee = FungibleAsset::mock(42).unwrap_fungible();
+    let faucet_id = AccountId::dummy(
+        [2; 15],
+        AccountIdVersion::Version0,
+        AccountType::FungibleFaucet,
+        AccountStorageMode::Public,
+    );
 
     let tx = miden_protocol::transaction::ProvenTransactionBuilder::new(
         account_id,
-        initial,
-        final_commit,
-        delta_commit,
-        ref_block_num,
-        ref_block_commitment,
-        fee,
-        expiration,
-        proof,
+        [2u8; 32].try_into().unwrap(),
+        [3u8; 32].try_into().unwrap(),
+        [4u8; 32].try_into().unwrap(),
+        BlockNumber::from(1),
+        Word::default(),
+        FungibleAsset::new(faucet_id, 42).expect("valid asset"),
+        BlockNumber::from(100),
+        ExecutionProof::new_dummy(),
     )
     .build()
     .expect("should build ProvenTransaction");
 
-    // Serialize to bytes
     let bytes = tx.to_bytes();
     assert!(!bytes.is_empty(), "Serialized bytes should not be empty");
 
-    // Deserialize back
     let recovered =
         ProvenTransaction::read_from_bytes(&bytes).expect("should deserialize ProvenTransaction");
 
@@ -151,6 +130,13 @@ fn test_proven_transaction_hex_roundtrip() {
         [7; 15],
         AccountIdVersion::Version0,
         AccountType::RegularAccountUpdatableCode,
+        AccountStorageMode::Private,
+    );
+
+    let faucet_id = AccountId::dummy(
+        [8; 15],
+        AccountIdVersion::Version0,
+        AccountType::FungibleFaucet,
         AccountStorageMode::Public,
     );
 
@@ -161,14 +147,13 @@ fn test_proven_transaction_hex_roundtrip() {
         [7u8; 32].try_into().unwrap(),
         BlockNumber::from(10),
         Word::default(),
-        FungibleAsset::mock(100).unwrap_fungible(),
+        FungibleAsset::new(faucet_id, 100).expect("valid asset"),
         BlockNumber::from(200),
         ExecutionProof::new_dummy(),
     )
     .build()
     .expect("should build");
 
-    // Simulate the wire format: serialize → hex encode → hex decode → deserialize
     let bytes = tx.to_bytes();
     let hex_str = hex::encode(&bytes);
     let decoded_bytes = hex::decode(&hex_str).expect("should decode hex");
@@ -192,22 +177,32 @@ fn test_transaction_verifier_creation() {
 // P2ID Note Tests
 // ============================================================================
 
-/// Test that P2idNote script root is consistent across calls.
+/// Test that WellKnownNote::P2ID script root is consistent across calls.
 #[test]
 fn test_p2id_script_root_consistency() {
-    let root1 = miden_standards::note::P2idNote::script_root();
-    let root2 = miden_standards::note::P2idNote::script_root();
+    use miden_standards::note::WellKnownNote;
+
+    let root1 = WellKnownNote::P2ID.script_root();
+    let root2 = WellKnownNote::P2ID.script_root();
     assert_eq!(root1, root2, "P2ID script root should be deterministic");
 }
 
-/// Test P2idNoteStorage roundtrip via AccountId.
+/// Test that P2ID note can be created and its inputs contain the target account.
 #[test]
-fn test_p2id_note_storage_roundtrip() {
+fn test_p2id_note_target_extraction() {
     use miden_protocol::account::{
         AccountId, AccountIdVersion, AccountStorageMode, AccountType,
     };
-    use miden_protocol::note::NoteStorage;
-    use miden_standards::note::P2idNoteStorage;
+    use miden_protocol::asset::{Asset, FungibleAsset};
+    use miden_protocol::note::NoteType;
+    use miden_standards::note::create_p2id_note;
+
+    let sender = AccountId::dummy(
+        [10u8; 15],
+        AccountIdVersion::Version0,
+        AccountType::RegularAccountUpdatableCode,
+        AccountStorageMode::Public,
+    );
 
     let target = AccountId::dummy(
         [99u8; 15],
@@ -216,10 +211,31 @@ fn test_p2id_note_storage_roundtrip() {
         AccountStorageMode::Public,
     );
 
-    let storage = P2idNoteStorage::new(target);
-    let note_storage: NoteStorage = storage.into();
-    let recovered =
-        P2idNoteStorage::try_from(note_storage.items()).expect("should parse P2ID storage");
+    let faucet = AccountId::dummy(
+        [50u8; 15],
+        AccountIdVersion::Version0,
+        AccountType::FungibleFaucet,
+        AccountStorageMode::Public,
+    );
 
-    assert_eq!(recovered.target(), target);
+    let asset = FungibleAsset::new(faucet, 1_000_000).expect("valid asset");
+    let mut rng = miden_protocol::crypto::rand::RpoRandomCoin::new(miden_protocol::Word::default());
+
+    let note = create_p2id_note(
+        sender,
+        target,
+        vec![Asset::Fungible(asset)],
+        NoteType::Public,
+        Default::default(),
+        &mut rng,
+    )
+    .expect("should create P2ID note");
+
+    // Verify the note inputs contain the target account ID
+    // build_p2id_recipient stores [target.suffix(), target.prefix().as_felt()]
+    let inputs = note.recipient().inputs().values();
+    assert!(inputs.len() >= 2, "P2ID note should have at least 2 inputs");
+
+    let recovered_target = AccountId::new_unchecked([inputs[1], inputs[0]]);
+    assert_eq!(recovered_target, target, "Extracted target should match original");
 }

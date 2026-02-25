@@ -159,27 +159,23 @@ where
 #[cfg(feature = "miden-client-native")]
 pub struct MidenClientSigner {
     account_id_hex: String,
-    // TODO: Hold a reference or Arc to miden_client::Client once
-    // the store/keystore/RPC configuration story is finalized.
-    //
-    // The miden_client::Client requires:
-    //   - A Store impl (SqliteStore or custom)
-    //   - A KeyStore impl
-    //   - A NodeRpcClient impl
-    //
-    // These are heavyweight dependencies, so the signer will likely
-    // accept an Arc<Client<...>> or be constructed from a builder.
+    client: std::sync::Arc<tokio::sync::Mutex<miden_client::Client<miden_client::keystore::FilesystemKeyStore>>>,
 }
 
 #[cfg(feature = "miden-client-native")]
 impl MidenClientSigner {
-    /// Creates a new signer for the given account ID.
+    /// Creates a new signer backed by a `miden_client::Client`.
     ///
     /// The `account_id_hex` should be the hex-encoded Miden account ID
-    /// (with or without `0x` prefix) of the sender account.
-    pub fn new(account_id_hex: impl Into<String>) -> Self {
+    /// (with or without `0x` prefix) of the sender account. The sender
+    /// account must already exist in the client's store.
+    pub fn new(
+        account_id_hex: impl Into<String>,
+        client: std::sync::Arc<tokio::sync::Mutex<miden_client::Client<miden_client::keystore::FilesystemKeyStore>>>,
+    ) -> Self {
         Self {
             account_id_hex: account_id_hex.into(),
+            client,
         }
     }
 }
@@ -189,7 +185,7 @@ impl std::fmt::Debug for MidenClientSigner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MidenClientSigner")
             .field("account_id_hex", &self.account_id_hex)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -198,6 +194,7 @@ impl Clone for MidenClientSigner {
     fn clone(&self) -> Self {
         Self {
             account_id_hex: self.account_id_hex.clone(),
+            client: self.client.clone(),
         }
     }
 }
@@ -211,50 +208,78 @@ impl MidenSignerLike for MidenClientSigner {
 
     async fn create_and_prove_p2id(
         &self,
-        _recipient: &str,
-        _faucet_id: &str,
-        _amount: u64,
+        recipient: &str,
+        faucet_id: &str,
+        amount: u64,
     ) -> Result<(String, String), X402Error> {
-        // TODO: Implement using miden_client::Client.
-        //
-        // The full flow would be:
-        //
-        // 1. Parse sender, recipient, and faucet AccountIds:
-        //    let sender = AccountId::from_hex(&self.account_id_hex)?;
-        //    let target = AccountId::from_hex(recipient)?;
-        //    let faucet = AccountId::from_hex(faucet_id)?;
-        //
-        // 2. Create a FungibleAsset:
-        //    let asset = FungibleAsset::new(faucet, amount)?;
-        //
-        // 3. Create a P2ID note using miden_standards::note::P2idNote::create():
-        //    let note = P2idNote::create(
-        //        sender, target,
-        //        vec![Asset::Fungible(asset)],
-        //        NoteType::Public,  // Must be public for facilitator verification
-        //        NoteAttachment::empty(),
-        //        &mut rng,
-        //    )?;
-        //
-        // 4. Build TransactionRequest with the output note:
-        //    let tx_request = TransactionRequest::new()
-        //        .with_output_notes(vec![OutputNote::Full(note)]);
-        //
-        // 5. Execute and prove the transaction:
-        //    let proven_tx = client.prove_transaction(sender, tx_request).await?;
-        //
-        // 6. Serialize the ProvenTransaction:
-        //    let tx_bytes = proven_tx.to_bytes();
-        //    let tx_hex = hex::encode(&tx_bytes);
-        //    let tx_id = format!("{}", proven_tx.id());
-        //
-        // 7. Return (tx_hex, tx_id)
+        use miden_protocol::account::AccountId;
+        use miden_protocol::asset::{Asset, FungibleAsset};
+        use miden_protocol::note::NoteType;
+        use miden_protocol::utils::serde::Serializable;
 
-        Err(X402Error::SigningError(
-            "MidenClientSigner::create_and_prove_p2id not yet implemented — \
-             requires miden_client::Client integration"
-                .to_string(),
-        ))
+        // 1. Parse account IDs
+        let sender = AccountId::from_hex(&self.account_id_hex).map_err(|e| {
+            X402Error::SigningError(format!("Invalid sender account ID: {e}"))
+        })?;
+        let target = AccountId::from_hex(recipient).map_err(|e| {
+            X402Error::SigningError(format!("Invalid recipient account ID: {e}"))
+        })?;
+        let faucet = AccountId::from_hex(faucet_id).map_err(|e| {
+            X402Error::SigningError(format!("Invalid faucet ID: {e}"))
+        })?;
+
+        // 2. Create the fungible asset
+        let asset = FungibleAsset::new(faucet, amount).map_err(|e| {
+            X402Error::SigningError(format!("Failed to create FungibleAsset: {e}"))
+        })?;
+
+        // 3. Build a P2ID TransactionRequest via the builder.
+        //    NoteType::Public is required so the facilitator can inspect
+        //    output notes and verify the payment off-chain.
+        let mut client_guard = self.client.lock().await;
+
+        let payment_data = miden_client::transaction::PaymentNoteDescription::new(
+            vec![Asset::Fungible(asset)],
+            sender,
+            target,
+        );
+
+        let tx_request = miden_client::transaction::TransactionRequestBuilder::new()
+            .build_pay_to_id(
+                payment_data,
+                NoteType::Public,
+                client_guard.rng(),
+            )
+            .map_err(|e| {
+                X402Error::SigningError(format!("Failed to build P2ID TransactionRequest: {e}"))
+            })?;
+
+        // 4. Execute the transaction locally in the Miden VM
+        let tx_result = client_guard
+            .execute_transaction(sender, tx_request)
+            .await
+            .map_err(|e| {
+                X402Error::SigningError(format!("Transaction execution failed: {e}"))
+            })?;
+
+        // 5. Generate STARK proof.
+        //    Grab the prover (Arc<dyn TransactionProver + Send + Sync>)
+        //    from the client, release the lock, then prove independently.
+        let prover = client_guard.prover();
+        drop(client_guard);
+
+        let proven_tx = prover
+            .prove(tx_result.into())
+            .await
+            .map_err(|e| X402Error::SigningError(format!("Transaction proving failed: {e}")))?;
+
+        // 6. Serialize the ProvenTransaction — the facilitator will verify
+        //    the proof and submit it to the network.
+        let tx_bytes = proven_tx.to_bytes();
+        let tx_hex = hex::encode(&tx_bytes);
+        let tx_id = format!("{}", proven_tx.id());
+
+        Ok((tx_hex, tx_id))
     }
 }
 

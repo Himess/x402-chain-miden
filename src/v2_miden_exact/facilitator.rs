@@ -121,9 +121,10 @@ async fn verify_miden_payment(
     request: &types::VerifyRequest,
 ) -> Result<v2::VerifyResponse, MidenExactError> {
     use crate::chain::MidenAccountAddress;
+    use miden_protocol::account::AccountId;
     use miden_protocol::transaction::{OutputNote, ProvenTransaction};
     use miden_protocol::utils::serde::Deserializable;
-    use miden_standards::note::P2idNoteStorage;
+    use miden_standards::note::WellKnownNote;
     use miden_tx::TransactionVerifier;
 
     let payload = &request.payment_payload;
@@ -163,6 +164,9 @@ async fn verify_miden_payment(
         .parse()
         .map_err(|_| MidenExactError::DeserializationError("Invalid amount".to_string()))?;
 
+    // P2ID script root for comparison
+    let p2id_script_root = WellKnownNote::P2ID.script_root();
+
     let mut payment_found = false;
 
     for output_note in proven_tx.output_notes().iter() {
@@ -170,17 +174,21 @@ async fn verify_miden_payment(
         if let OutputNote::Full(note) = output_note {
             // Check if this is a P2ID note by comparing script roots
             let script_root = note.recipient().script().root();
-            if script_root != miden_standards::note::P2idNote::script_root() {
+            if script_root != p2id_script_root {
                 continue;
             }
 
-            // Parse P2ID storage to get target account ID
-            let p2id_storage = match P2idNoteStorage::try_from(note.recipient().storage().items()) {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
+            // Extract target account ID from P2ID note inputs.
+            // build_p2id_recipient stores [target.suffix(), target.prefix().as_felt()]
+            // so inputs[0] = suffix, inputs[1] = prefix.
+            // AccountId::new_unchecked expects [prefix, suffix].
+            let inputs = note.recipient().inputs().values();
+            if inputs.len() < 2 {
+                continue;
+            }
+            let target = AccountId::new_unchecked([inputs[1], inputs[0]]);
 
-            if p2id_storage.target() != required_recipient {
+            if target != required_recipient {
                 continue;
             }
 
