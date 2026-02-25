@@ -624,6 +624,186 @@ async fn e2e_get_account_balance() {
 }
 
 // ============================================================================
+// E2E: Trusted Facilitator (Private) P2ID Transfer
+// ============================================================================
+
+/// Full x402 payment flow using TrustedFacilitator privacy mode:
+/// 1. Create MidenClientSigner, sync
+/// 2. create_and_prove_p2id_with_privacy with TrustedFacilitator
+/// 3. Assert note_data is present and non-empty
+/// 4. Deserialize ProvenTransaction → verify has OutputNote::Header (private)
+/// 5. Verify STARK proof
+/// 6. Deserialize full note from note_data → verify NoteId matches
+/// 7. Call verify_trusted_facilitator_note → assert OK
+/// 8. Submit to Miden node
+/// 9. Print comparison summary
+#[tokio::test]
+#[ignore] // requires testnet + funded wallets
+async fn e2e_trusted_facilitator_payment_flow() {
+    use miden_protocol::account::AccountId;
+    use miden_protocol::note::Note;
+    use miden_protocol::transaction::{OutputNote, ProvenTransaction};
+    use miden_protocol::utils::serde::{Deserializable, Serializable};
+    use miden_tx::TransactionVerifier;
+    use x402_chain_miden::privacy::{PrivacyMode, verify_trusted_facilitator_note};
+
+    println!("\n=== E2E Trusted Facilitator Payment Flow ===\n");
+
+    let client = build_testnet_client().await;
+    let client = Arc::new(Mutex::new(client));
+
+    // Sync
+    {
+        let mut c = client.lock().await;
+        let summary = c.sync_state().await.expect("sync with testnet");
+        println!("Synced to block {}\n", summary.block_num);
+    }
+
+    let signer = MidenClientSigner::new(WALLET_1, client.clone());
+
+    // ── 1. Create and prove P2ID with TrustedFacilitator privacy ─────────
+    let amount: u64 = 250;
+    println!("Creating TrustedFacilitator P2ID: {amount} tokens {WALLET_1} → {WALLET_2}");
+
+    let t_start = Instant::now();
+    let (proven_tx_hex, tx_id, tx_inputs_hex, note_data) = signer
+        .create_and_prove_p2id_with_privacy(
+            WALLET_2,
+            FAUCET_ID,
+            amount,
+            &PrivacyMode::TrustedFacilitator,
+        )
+        .await
+        .expect("create_and_prove_p2id_with_privacy should succeed");
+    let prove_time = t_start.elapsed();
+
+    println!("Transaction proved in {prove_time:.2?}");
+    println!("TX ID: {tx_id}");
+    println!("ProvenTransaction hex: {} bytes", proven_tx_hex.len() / 2);
+    println!("TransactionInputs hex: {} bytes", tx_inputs_hex.len() / 2);
+
+    // ── 2. Assert note_data is present ────────────────────────────────────
+    let note_data_hex = note_data.expect("note_data should be Some for TrustedFacilitator");
+    assert!(!note_data_hex.is_empty(), "note_data should not be empty");
+    println!("Note data: {} bytes (off-chain)", note_data_hex.len() / 2);
+
+    // ── 3. Deserialize ProvenTransaction → verify OutputNote::Header ──────
+    println!("\nInspecting ProvenTransaction output notes...");
+    let proven_tx_bytes = hex::decode(&proven_tx_hex).expect("decode hex");
+    let proven_tx =
+        ProvenTransaction::read_from_bytes(&proven_tx_bytes).expect("deserialize ProvenTx");
+
+    let mut has_header = false;
+    for (i, output_note) in proven_tx.output_notes().iter().enumerate() {
+        let variant = match output_note {
+            OutputNote::Full(note) => {
+                format!("Full (ID: {})", note.id())
+            }
+            OutputNote::Header(_) => {
+                has_header = true;
+                format!("Header (ID: {}) — private, no data on-chain", output_note.id())
+            }
+            OutputNote::Partial(_) => "Partial".to_string(),
+        };
+        println!("  [{i}] {variant}");
+    }
+    assert!(
+        has_header,
+        "Private P2ID should produce OutputNote::Header in ProvenTransaction"
+    );
+
+    // ── 4. Verify STARK proof ─────────────────────────────────────────────
+    println!("\nVerifying STARK proof...");
+    let t_verify = Instant::now();
+    let verifier = TransactionVerifier::new(96);
+    verifier
+        .verify(&proven_tx)
+        .expect("STARK proof should be valid");
+    let verify_time = t_verify.elapsed();
+    println!("STARK proof verified in {verify_time:.2?}");
+
+    // ── 5. Verify NoteId binding ──────────────────────────────────────────
+    println!("\nVerifying NoteId binding...");
+    let note_bytes = hex::decode(&note_data_hex).expect("decode note hex");
+    let full_note = Note::read_from_bytes(&note_bytes).expect("deserialize Note");
+
+    let note_id = full_note.id();
+    let id_matches = proven_tx
+        .output_notes()
+        .iter()
+        .any(|on| on.id() == note_id);
+    assert!(
+        id_matches,
+        "Note ID should match an output note in ProvenTransaction"
+    );
+    println!("  Note ID {note_id} matches output note — binding verified");
+
+    // Verify the note data round-trips correctly
+    let re_serialized = hex::encode(full_note.to_bytes());
+    assert_eq!(
+        note_data_hex, re_serialized,
+        "Note should round-trip through serialization"
+    );
+
+    // ── 6. Call verify_trusted_facilitator_note ───────────────────────────
+    println!("\nRunning verify_trusted_facilitator_note...");
+    let required_recipient = AccountId::from_hex(WALLET_2).expect("parse recipient");
+    let required_faucet = AccountId::from_hex(FAUCET_ID).expect("parse faucet");
+    verify_trusted_facilitator_note(
+        &proven_tx,
+        &note_data_hex,
+        required_recipient,
+        required_faucet,
+        amount,
+    )
+    .expect("verify_trusted_facilitator_note should succeed");
+    println!("  verify_trusted_facilitator_note: OK");
+
+    // ── 7. Submit to Miden node ───────────────────────────────────────────
+    println!("\nSubmitting to Miden node...");
+    let config = MidenChainConfig {
+        chain_reference: MidenChainReference::testnet(),
+        rpc_url: "https://rpc.testnet.miden.io".to_string(),
+    };
+    let provider = MidenChainProvider::from_config(&config);
+
+    let tx_inputs_bytes = hex::decode(&tx_inputs_hex).expect("decode tx_inputs hex");
+
+    let t_submit = Instant::now();
+    let submitted_tx_id = provider
+        .submit_proven_transaction(&proven_tx_bytes, &tx_inputs_bytes)
+        .await
+        .expect("submit_proven_transaction should succeed");
+    let submit_time = t_submit.elapsed();
+
+    println!("Submitted in {submit_time:.2?}");
+    println!("Submitted TX ID: {submitted_tx_id}");
+
+    // Sync to pick up changes
+    {
+        let mut c = client.lock().await;
+        let summary = c.sync_state().await.expect("post-submit sync");
+        println!("\nPost-submit sync to block {}", summary.block_num);
+    }
+
+    // ── Summary ───────────────────────────────────────────────────────────
+    println!("\n╔══════════════════════════════════════════════════════════════╗");
+    println!("║         TRUSTED FACILITATOR E2E RESULTS                     ║");
+    println!("╠══════════════════════════════════════════════════════════════╣");
+    println!("║  Privacy mode:  TrustedFacilitator (NoteType::Private)      ║");
+    println!("║  Prove time:    {prove_time:.2?}                                   ║");
+    println!("║  Verify time:   {verify_time:.2?}                                   ║");
+    println!("║  Submit time:   {submit_time:.2?}                                   ║");
+    println!("║  Total time:    {:.2?}                                   ║", t_start.elapsed());
+    println!("║                                                              ║");
+    println!("║  On-chain:  OutputNote::Header (hash commitment only)        ║");
+    println!("║  Off-chain: Full note data ({} bytes) shared with facilitator║", note_data_hex.len() / 2);
+    println!("║  NoteId binding: VERIFIED                                    ║");
+    println!("║  TX ID: {submitted_tx_id}                                    ║");
+    println!("╚══════════════════════════════════════════════════════════════╝\n");
+}
+
+// ============================================================================
 // MidenAccountAddress conversion test (with real IDs)
 // ============================================================================
 

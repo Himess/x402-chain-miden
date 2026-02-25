@@ -337,6 +337,7 @@ mod facilitator_tests {
 // ============================================================================
 
 mod payload_tests {
+    use x402_chain_miden::privacy::PrivacyMode;
     use x402_chain_miden::v2_miden_exact::types::{ExactScheme, MidenExactPayload};
     use x402_chain_miden::chain::MidenAccountAddress;
 
@@ -352,6 +353,8 @@ mod payload_tests {
             proven_transaction: "aabbccdd".to_string(),
             transaction_id: "11223344".to_string(),
             transaction_inputs: "55667788".to_string(),
+            privacy_mode: PrivacyMode::Public,
+            note_data: None,
         };
 
         let json = serde_json::to_string(&payload).unwrap();
@@ -369,6 +372,8 @@ mod payload_tests {
             proven_transaction: "cafebabe".to_string(),
             transaction_id: "deadbeef".to_string(),
             transaction_inputs: "01020304".to_string(),
+            privacy_mode: PrivacyMode::Public,
+            note_data: None,
         };
 
         let value = serde_json::to_value(&payload).unwrap();
@@ -420,6 +425,7 @@ mod error_tests {
         };
         let _ = MidenExactError::TransactionExpired(0u64);
         let _ = MidenExactError::DeserializationError("parse fail".to_string());
+        let _ = MidenExactError::NoteBindingFailed("binding fail".to_string());
         let _ = MidenExactError::AcceptedRequirementsMismatch;
         let _ = MidenExactError::ProviderError("rpc fail".to_string());
     }

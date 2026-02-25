@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use x402_types::proto::v2;
 
 use crate::chain::MidenAccountAddress;
+use crate::privacy::PrivacyMode;
 
 /// String literal for the "exact" scheme name.
 #[derive(Debug, Clone, Copy)]
@@ -72,6 +73,19 @@ pub struct MidenExactPayload {
     /// The node needs both the proven transaction and its inputs for
     /// mempool admission. Serialized using `miden_protocol::utils::serde::Serializable`.
     pub transaction_inputs: String,
+    /// The privacy mode used for this payment.
+    ///
+    /// Defaults to `Public` for backward compatibility with payloads
+    /// that omit this field.
+    #[serde(default)]
+    pub privacy_mode: PrivacyMode,
+    /// The full note data (hex-encoded) for `TrustedFacilitator` privacy mode.
+    ///
+    /// When `privacy_mode` is `TrustedFacilitator`, the note is private on-chain
+    /// (only a hash commitment). The full note is shared off-chain via this field
+    /// so the facilitator can verify the NoteId cryptographic binding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note_data: Option<String>,
 }
 
 /// Type alias for V2 payment requirements with Miden-specific types.
@@ -125,6 +139,10 @@ pub enum MidenExactError {
     #[error("Accepted requirements do not match provided requirements")]
     AcceptedRequirementsMismatch,
 
+    /// Note binding verification failed (NoteId mismatch or invalid note data).
+    #[error("Note binding verification failed: {0}")]
+    NoteBindingFailed(String),
+
     /// An error from the Miden provider.
     #[error("Provider error: {0}")]
     ProviderError(String),
@@ -176,6 +194,8 @@ mod tests {
             proven_transaction: "deadbeef".to_string(),
             transaction_id: "0x1234".to_string(),
             transaction_inputs: "cafebabe".to_string(),
+            privacy_mode: PrivacyMode::Public,
+            note_data: None,
         };
         let json = serde_json::to_string(&payload).unwrap();
         let deserialized: MidenExactPayload = serde_json::from_str(&json).unwrap();
@@ -183,5 +203,39 @@ mod tests {
         assert_eq!(deserialized.proven_transaction, "deadbeef");
         assert_eq!(deserialized.transaction_id, "0x1234");
         assert_eq!(deserialized.transaction_inputs, "cafebabe");
+        assert_eq!(deserialized.privacy_mode, PrivacyMode::Public);
+        assert!(deserialized.note_data.is_none());
+    }
+
+    #[test]
+    fn test_miden_exact_payload_serde_with_privacy() {
+        let payload = MidenExactPayload {
+            from: "0xaabbccdd".parse().unwrap(),
+            proven_transaction: "deadbeef".to_string(),
+            transaction_id: "0x1234".to_string(),
+            transaction_inputs: "cafebabe".to_string(),
+            privacy_mode: PrivacyMode::TrustedFacilitator,
+            note_data: Some("aabbccdd".to_string()),
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains("\"privacyMode\":\"trusted_facilitator\""));
+        assert!(json.contains("\"noteData\":\"aabbccdd\""));
+        let deserialized: MidenExactPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.privacy_mode, PrivacyMode::TrustedFacilitator);
+        assert_eq!(deserialized.note_data.as_deref(), Some("aabbccdd"));
+    }
+
+    #[test]
+    fn test_miden_exact_payload_backward_compat() {
+        // Old JSON without privacyMode and noteData should deserialize with defaults
+        let json = r#"{
+            "from": "0xaabbccdd",
+            "provenTransaction": "deadbeef",
+            "transactionId": "0x1234",
+            "transactionInputs": "cafebabe"
+        }"#;
+        let payload: MidenExactPayload = serde_json::from_str(json).unwrap();
+        assert_eq!(payload.privacy_mode, PrivacyMode::Public);
+        assert!(payload.note_data.is_none());
     }
 }

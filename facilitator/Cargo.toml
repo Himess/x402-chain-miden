@@ -13,7 +13,7 @@ name = "x402-miden-facilitator"
 path = "src/main.rs"
 
 [dependencies]
-x402-chain-miden = { path = "..", features = ["facilitator"] }
+x402-chain-miden = { path = "..", features = ["facilitator", "miden-native"] }
 x402-types = { version = "1.0" }
 axum = { version = "0.8" }
 tokio = { version = "1.35", features = ["full"] }

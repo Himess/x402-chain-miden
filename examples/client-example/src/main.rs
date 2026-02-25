@@ -46,14 +46,14 @@ impl MidenSignerLike for MockMidenSigner {
         recipient: &str,
         faucet_id: &str,
         amount: u64,
-    ) -> Result<(String, String), X402Error> {
+    ) -> Result<(String, String, String), X402Error> {
         // In production, this would:
         // 1. Create a P2ID note: sender → recipient, amount of faucet token
         // 2. Build a TransactionRequest with the note as output
         // 3. Execute the transaction in Miden VM (client-side)
         // 4. Generate a STARK proof using LocalTransactionProver
         // 5. Serialize the ProvenTransaction to hex
-        // 6. Return (proven_tx_hex, transaction_id_hex)
+        // 6. Return (proven_tx_hex, transaction_id_hex, transaction_inputs_hex)
         //
         // Example with real miden-client:
         // ```
@@ -80,8 +80,9 @@ impl MidenSignerLike for MockMidenSigner {
             hex::encode(recipient.as_bytes())
         );
         let mock_tx_id = format!("{:0>64x}", amount);
+        let mock_tx_inputs = "01020304".to_string();
 
-        Ok((mock_proven_tx, mock_tx_id))
+        Ok((mock_proven_tx, mock_tx_id, mock_tx_inputs))
     }
 }
 
@@ -165,7 +166,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(0);
 
-            let (proven_tx, tx_id) = signer
+            let (proven_tx, tx_id, _tx_inputs) = signer
                 .create_and_prove_p2id(recipient, faucet, amount)
                 .await?;
 

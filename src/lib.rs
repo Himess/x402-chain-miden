@@ -47,6 +47,7 @@
 //! ```
 
 pub mod chain;
+pub mod privacy;
 pub mod v2_miden_exact;
 
 mod networks;

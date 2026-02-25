@@ -37,27 +37,26 @@ use x402_types::scheme::X402SchemeFacilitator;
 /// Shared application state.
 struct AppState {
     facilitator: V2MidenExactFacilitator,
+    faucet_id: String,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize tracing
+    // Initialize tracing: LOG_LEVEL is used if RUST_LOG is not set
+    let log_level = env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&log_level)),
         )
         .init();
 
     // Read configuration from environment
-    let port: u16 = env::var("PORT")
-        .ok()
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(4020);
-    let host = env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let rpc_url =
         env::var("MIDEN_RPC_URL").unwrap_or_else(|_| "https://rpc.testnet.miden.io".to_string());
     let network = env::var("MIDEN_NETWORK").unwrap_or_else(|_| "testnet".to_string());
+    let faucet_id = env::var("FAUCET_ID")
+        .unwrap_or_else(|_| "0x37d5977a8e16d8205a360820f0230f".to_string());
 
     // Build Miden provider
     let chain_reference = MidenChainReference::try_from(network.as_str())
@@ -71,11 +70,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!(
         chain_id = %provider.chain_id(),
+        faucet_id = %faucet_id,
         "Miden facilitator starting"
     );
 
     let facilitator = V2MidenExactFacilitator::new(provider);
-    let state = Arc::new(AppState { facilitator });
+    let state = Arc::new(AppState {
+        facilitator,
+        faucet_id,
+    });
 
     // Build router
     let app = Router::new()
@@ -88,7 +91,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
-    let bind_address = format!("{host}:{port}");
+    // BIND_ADDR takes precedence; fall back to HOST:PORT for backward compat
+    let bind_address = env::var("BIND_ADDR").unwrap_or_else(|_| {
+        let port: u16 = env::var("PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(4020);
+        let host = env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+        format!("{host}:{port}")
+    });
     let listener = tokio::net::TcpListener::bind(&bind_address).await?;
     tracing::info!("Listening on {bind_address}");
 
@@ -97,18 +108,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn root_handler() -> impl IntoResponse {
+async fn root_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     Json(serde_json::json!({
         "service": "x402-miden-facilitator",
         "version": env!("CARGO_PKG_VERSION"),
         "chain": "miden",
         "scheme": "exact",
+        "faucetId": state.faucet_id,
     }))
 }
 
 async fn health_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     match state.facilitator.supported().await {
-        Ok(response) => (StatusCode::OK, Json(serde_json::to_value(response).unwrap())),
+        Ok(response) => {
+            let mut value = serde_json::to_value(response).unwrap();
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert("faucetId".to_string(), serde_json::json!(state.faucet_id));
+            }
+            (StatusCode::OK, Json(value))
+        }
         Err(e) => (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({ "error": e.to_string() })),

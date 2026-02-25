@@ -121,10 +121,9 @@ async fn verify_miden_payment(
     request: &types::VerifyRequest,
 ) -> Result<v2::VerifyResponse, MidenExactError> {
     use crate::chain::MidenAccountAddress;
-    use miden_protocol::account::AccountId;
-    use miden_protocol::transaction::{OutputNote, ProvenTransaction};
+    use crate::privacy::{PrivacyMode, verify_public_note, verify_trusted_facilitator_note};
+    use miden_protocol::transaction::ProvenTransaction;
     use miden_protocol::utils::serde::Deserializable;
-    use miden_standards::note::WellKnownNote;
     use miden_tx::TransactionVerifier;
 
     let payload = &request.payment_payload;
@@ -150,7 +149,7 @@ async fn verify_miden_payment(
         MidenExactError::InvalidProof(format!("STARK proof verification failed: {e}"))
     })?;
 
-    // 4. Check output notes for P2ID payment to correct recipient with correct amount
+    // 4. Parse payment requirements
     let required_recipient = requirements.pay_to.to_account_id().map_err(|e| {
         MidenExactError::DeserializationError(format!("Invalid pay_to account ID: {e}"))
     })?;
@@ -164,54 +163,30 @@ async fn verify_miden_payment(
         .parse()
         .map_err(|_| MidenExactError::DeserializationError("Invalid amount".to_string()))?;
 
-    // P2ID script root for comparison
-    let p2id_script_root = WellKnownNote::P2ID.script_root();
-
-    let mut payment_found = false;
-
-    for output_note in proven_tx.output_notes().iter() {
-        // Only Full output notes can be inspected (public notes)
-        if let OutputNote::Full(note) = output_note {
-            // Check if this is a P2ID note by comparing script roots
-            let script_root = note.recipient().script().root();
-            if script_root != p2id_script_root {
-                continue;
-            }
-
-            // Extract target account ID from P2ID note inputs.
-            // build_p2id_recipient stores [target.suffix(), target.prefix().as_felt()]
-            // so inputs[0] = suffix, inputs[1] = prefix.
-            // AccountId::new_unchecked expects [prefix, suffix].
-            let inputs = note.recipient().inputs().values();
-            if inputs.len() < 2 {
-                continue;
-            }
-            let target = AccountId::new_unchecked([inputs[1], inputs[0]]);
-
-            if target != required_recipient {
-                continue;
-            }
-
-            // Check assets for the required fungible asset
-            for fungible in note.assets().iter_fungible() {
-                if fungible.faucet_id() == required_faucet && fungible.amount() >= required_amount {
-                    payment_found = true;
-                    break;
-                }
-            }
-
-            if payment_found {
-                break;
-            }
+    // 5. Dispatch note verification based on privacy mode
+    match &miden_payload.privacy_mode {
+        PrivacyMode::Public => {
+            verify_public_note(
+                &proven_tx,
+                required_recipient,
+                required_faucet,
+                required_amount,
+            )?;
         }
-    }
-
-    if !payment_found {
-        return Err(MidenExactError::PaymentNotFound(
-            "No P2ID output note found matching the required recipient, faucet, and amount. \
-             Note: only NoteType::Public notes can be verified."
-                .to_string(),
-        ));
+        PrivacyMode::TrustedFacilitator => {
+            let note_data = miden_payload.note_data.as_deref().ok_or_else(|| {
+                MidenExactError::DeserializationError(
+                    "note_data is required for trusted_facilitator privacy mode".to_string(),
+                )
+            })?;
+            verify_trusted_facilitator_note(
+                &proven_tx,
+                note_data,
+                required_recipient,
+                required_faucet,
+                required_amount,
+            )?;
+        }
     }
 
     let payer = MidenAccountAddress::from_account_id(proven_tx.account_id()).to_string();
