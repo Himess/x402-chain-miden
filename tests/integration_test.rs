@@ -387,7 +387,7 @@ mod payload_tests {
     fn test_miden_address_from_bytes() {
         // Valid 15-byte address
         let bytes = vec![0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b];
-        let addr = MidenAccountAddress::from_bytes(bytes).unwrap();
+        let addr = MidenAccountAddress::from_bytes(&bytes).unwrap();
         let hex_str = addr.to_string();
         assert_eq!(hex_str, "0xdeadbeef0102030405060708090a0b");
     }
@@ -395,10 +395,10 @@ mod payload_tests {
     #[test]
     fn test_miden_address_from_bytes_rejects_wrong_length() {
         let short = vec![0xde, 0xad, 0xbe, 0xef];
-        assert!(MidenAccountAddress::from_bytes(short).is_err());
+        assert!(MidenAccountAddress::from_bytes(&short).is_err());
 
         let long = vec![0u8; 16];
-        assert!(MidenAccountAddress::from_bytes(long).is_err());
+        assert!(MidenAccountAddress::from_bytes(&long).is_err());
     }
 }
 

@@ -30,6 +30,10 @@ pub struct MidenChainProvider {
     rpc_url: String,
     #[cfg(feature = "miden-client-native")]
     rpc_client: std::sync::Arc<miden_client::rpc::GrpcClient>,
+    /// Tracks whether the genesis commitment has already been set on the
+    /// gRPC client, so we skip the RPC call on subsequent invocations.
+    #[cfg(feature = "miden-client-native")]
+    genesis_committed: std::sync::atomic::AtomicBool,
 }
 
 impl MidenChainProvider {
@@ -50,6 +54,8 @@ impl MidenChainProvider {
                     miden_client::rpc::GrpcClient::new(&endpoint, 10_000),
                 )
             },
+            #[cfg(feature = "miden-client-native")]
+            genesis_committed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -69,8 +75,20 @@ impl MidenChainProvider {
     /// This fetches the genesis block header from the node and sets the
     /// commitment on the gRPC client. Subsequent calls are no-ops since
     /// `set_genesis_commitment` is idempotent.
+    /// Ensures the gRPC client has the genesis commitment set.
+    ///
+    /// Uses an `AtomicBool` to skip the RPC call on subsequent invocations.
+    /// The first call fetches the genesis block header and sets the commitment;
+    /// all later calls return immediately.
     #[cfg(feature = "miden-client-native")]
     async fn ensure_genesis_commitment(&self) -> Result<(), MidenProviderError> {
+        use std::sync::atomic::Ordering;
+
+        // Fast path: already committed
+        if self.genesis_committed.load(Ordering::Acquire) {
+            return Ok(());
+        }
+
         use miden_client::rpc::NodeRpcClient;
         use miden_protocol::block::BlockNumber;
 
@@ -93,6 +111,7 @@ impl MidenChainProvider {
                 ))
             })?;
 
+        self.genesis_committed.store(true, Ordering::Release);
         Ok(())
     }
 

@@ -30,7 +30,7 @@ pub const MIDEN_NAMESPACE: &str = "miden";
 /// assert!(addr.to_string().starts_with("0x"));
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub struct MidenAccountAddress(Vec<u8>);
+pub struct MidenAccountAddress([u8; MIDEN_ACCOUNT_ID_BYTE_LEN]);
 
 /// The expected byte length of a Miden account ID (120 bits = 15 bytes).
 pub const MIDEN_ACCOUNT_ID_BYTE_LEN: usize = 15;
@@ -41,24 +41,23 @@ impl MidenAccountAddress {
     /// # Errors
     ///
     /// Returns an error if the input is not exactly 15 bytes.
-    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, MidenAddressParseError> {
-        if bytes.len() != MIDEN_ACCOUNT_ID_BYTE_LEN {
-            return Err(MidenAddressParseError::InvalidLength {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, MidenAddressParseError> {
+        let arr: [u8; MIDEN_ACCOUNT_ID_BYTE_LEN] =
+            bytes.try_into().map_err(|_| MidenAddressParseError::InvalidLength {
                 expected: MIDEN_ACCOUNT_ID_BYTE_LEN,
                 got: bytes.len(),
-            });
-        }
-        Ok(Self(bytes))
+            })?;
+        Ok(Self(arr))
     }
 
     /// Returns the raw bytes of the account ID.
-    pub fn as_bytes(&self) -> &[u8] {
+    pub fn as_bytes(&self) -> &[u8; MIDEN_ACCOUNT_ID_BYTE_LEN] {
         &self.0
     }
 
     /// Returns the hex-encoded account ID with 0x prefix.
     pub fn to_hex(&self) -> String {
-        format!("0x{}", hex::encode(&self.0))
+        format!("0x{}", hex::encode(self.0))
     }
 }
 
@@ -69,19 +68,18 @@ impl FromStr for MidenAccountAddress {
         let s = s.strip_prefix("0x").unwrap_or(s);
         let bytes =
             hex::decode(s).map_err(|e| MidenAddressParseError::InvalidHex(e.to_string()))?;
-        if bytes.len() != MIDEN_ACCOUNT_ID_BYTE_LEN {
-            return Err(MidenAddressParseError::InvalidLength {
+        let arr: [u8; MIDEN_ACCOUNT_ID_BYTE_LEN] =
+            bytes.try_into().map_err(|v: Vec<u8>| MidenAddressParseError::InvalidLength {
                 expected: MIDEN_ACCOUNT_ID_BYTE_LEN,
-                got: bytes.len(),
-            });
-        }
-        Ok(Self(bytes))
+                got: v.len(),
+            })?;
+        Ok(Self(arr))
     }
 }
 
 impl Display for MidenAccountAddress {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "0x{}", hex::encode(&self.0))
+        write!(f, "0x{}", hex::encode(self.0))
     }
 }
 

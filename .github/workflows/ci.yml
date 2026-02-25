@@ -1,0 +1,14 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features: ["", "client", "server", "facilitator", "full"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo check --features "${{ matrix.features }}"
+      - run: cargo test --features "${{ matrix.features }}"
+      - run: cargo clippy --features "${{ matrix.features }}" -- -D warnings

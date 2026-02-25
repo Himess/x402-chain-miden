@@ -9,6 +9,7 @@
 //! - `POST /settle`    - Settle a payment on-chain
 //! - `GET  /supported` - List supported payment kinds
 //! - `GET  /health`    - Health check
+//! - `GET  /metrics`   - Prometheus-format metrics
 //!
 //! # Configuration
 //!
@@ -26,6 +27,12 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use std::env;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+use axum::error_handling::HandleErrorLayer;
+use tower::ServiceBuilder;
+use tower::buffer::BufferLayer;
+use tower::limit::RateLimitLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use x402_chain_miden::chain::{MidenChainConfig, MidenChainProvider, MidenChainReference};
@@ -34,10 +41,32 @@ use x402_types::chain::ChainProviderOps;
 use x402_types::proto;
 use x402_types::scheme::X402SchemeFacilitator;
 
+/// Simple atomic counters for Prometheus metrics.
+struct Metrics {
+    verify_requests_total: AtomicU64,
+    settle_requests_total: AtomicU64,
+    verify_errors_total: AtomicU64,
+    settle_errors_total: AtomicU64,
+    // TODO: Add histogram support for verify_duration_seconds / settle_duration_seconds
+    // using the `metrics` + `metrics-exporter-prometheus` crates.
+}
+
+impl Metrics {
+    fn new() -> Self {
+        Self {
+            verify_requests_total: AtomicU64::new(0),
+            settle_requests_total: AtomicU64::new(0),
+            verify_errors_total: AtomicU64::new(0),
+            settle_errors_total: AtomicU64::new(0),
+        }
+    }
+}
+
 /// Shared application state.
 struct AppState {
     facilitator: V2MidenExactFacilitator,
     faucet_id: String,
+    metrics: Metrics,
 }
 
 #[tokio::main]
@@ -78,15 +107,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = Arc::new(AppState {
         facilitator,
         faucet_id,
+        metrics: Metrics::new(),
     });
 
-    // Build router
+    // Rate-limited routes for /verify and /settle: 100 requests per 60 seconds.
+    // HandleErrorLayer converts tower errors into HTTP 429 responses.
+    // BufferLayer wraps the non-Clone RateLimit service so axum can clone handlers.
+    let rate_limited_routes = Router::new()
+        .route("/verify", post(verify_handler))
+        .route("/settle", post(settle_handler))
+        .layer(
+            ServiceBuilder::new()
+                .layer(HandleErrorLayer::new(|err: tower::BoxError| async move {
+                    tracing::warn!(error = %err, "Rate limit or buffer error");
+                    (
+                        StatusCode::TOO_MANY_REQUESTS,
+                        Json(serde_json::json!({
+                            "error": "rate_limited",
+                            "message": "Too many requests. Please try again later.",
+                        })),
+                    )
+                }))
+                .layer(BufferLayer::new(256))
+                .layer(RateLimitLayer::new(100, Duration::from_secs(60))),
+        );
+
+    // Build router: non-rate-limited routes + rate-limited routes
     let app = Router::new()
         .route("/", get(root_handler))
         .route("/health", get(health_handler))
         .route("/supported", get(supported_handler))
-        .route("/verify", post(verify_handler))
-        .route("/settle", post(settle_handler))
+        .route("/metrics", get(metrics_handler))
+        .merge(rate_limited_routes)
         .layer(DefaultBodyLimit::max(2 * 1024 * 1024)) // 2 MB
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
@@ -170,9 +222,12 @@ async fn verify_handler(
     State(state): State<Arc<AppState>>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    state.metrics.verify_requests_total.fetch_add(1, Ordering::Relaxed);
+
     let request = match serde_json::from_value::<proto::VerifyRequest>(body) {
         Ok(req) => req,
         Err(e) => {
+            state.metrics.verify_errors_total.fetch_add(1, Ordering::Relaxed);
             return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({
@@ -186,12 +241,16 @@ async fn verify_handler(
     match state.facilitator.verify(&request).await {
         Ok(response) => match serde_json::to_value(response) {
             Ok(value) => (StatusCode::OK, Json(value)),
-            Err(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": format!("serialization error: {e}") })),
-            ),
+            Err(e) => {
+                state.metrics.verify_errors_total.fetch_add(1, Ordering::Relaxed);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": format!("serialization error: {e}") })),
+                )
+            }
         },
         Err(e) => {
+            state.metrics.verify_errors_total.fetch_add(1, Ordering::Relaxed);
             tracing::warn!(error = %e, "Verify failed");
             (
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -208,9 +267,12 @@ async fn settle_handler(
     State(state): State<Arc<AppState>>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    state.metrics.settle_requests_total.fetch_add(1, Ordering::Relaxed);
+
     let request = match serde_json::from_value::<proto::SettleRequest>(body) {
         Ok(req) => req,
         Err(e) => {
+            state.metrics.settle_errors_total.fetch_add(1, Ordering::Relaxed);
             return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({
@@ -224,12 +286,16 @@ async fn settle_handler(
     match state.facilitator.settle(&request).await {
         Ok(response) => match serde_json::to_value(response) {
             Ok(value) => (StatusCode::OK, Json(value)),
-            Err(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": format!("serialization error: {e}") })),
-            ),
+            Err(e) => {
+                state.metrics.settle_errors_total.fetch_add(1, Ordering::Relaxed);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": format!("serialization error: {e}") })),
+                )
+            }
         },
         Err(e) => {
+            state.metrics.settle_errors_total.fetch_add(1, Ordering::Relaxed);
             tracing::warn!(error = %e, "Settle failed");
             (
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -240,4 +306,37 @@ async fn settle_handler(
             )
         }
     }
+}
+
+/// Returns Prometheus-format metrics as plain text.
+///
+/// Tracks basic request counts and error counts. Duration histograms
+/// are left as a TODO for a future iteration using the `metrics` crate.
+async fn metrics_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let verify_total = state.metrics.verify_requests_total.load(Ordering::Relaxed);
+    let settle_total = state.metrics.settle_requests_total.load(Ordering::Relaxed);
+    let verify_errors = state.metrics.verify_errors_total.load(Ordering::Relaxed);
+    let settle_errors = state.metrics.settle_errors_total.load(Ordering::Relaxed);
+
+    let body = format!(
+        "# HELP verify_requests_total Total number of verify requests received.\n\
+         # TYPE verify_requests_total counter\n\
+         verify_requests_total {verify_total}\n\
+         # HELP settle_requests_total Total number of settle requests received.\n\
+         # TYPE settle_requests_total counter\n\
+         settle_requests_total {settle_total}\n\
+         # HELP verify_errors_total Total number of verify errors.\n\
+         # TYPE verify_errors_total counter\n\
+         verify_errors_total {verify_errors}\n\
+         # HELP settle_errors_total Total number of settle errors.\n\
+         # TYPE settle_errors_total counter\n\
+         settle_errors_total {settle_errors}\n\
+         # TODO: Add verify_duration_seconds and settle_duration_seconds histograms\n"
+    );
+
+    (
+        StatusCode::OK,
+        [("content-type", "text/plain; version=0.0.4; charset=utf-8")],
+        body,
+    )
 }

@@ -123,6 +123,14 @@ pub enum MidenExactError {
     #[error("Recipient mismatch: expected {expected}, got {got}")]
     RecipientMismatch { expected: String, got: String },
 
+    /// Scheme mismatch between payload and requirements.
+    #[error("Scheme mismatch: expected {expected}, got {got}")]
+    SchemeMismatch { expected: String, got: String },
+
+    /// Asset/faucet mismatch between payload and requirements.
+    #[error("Asset mismatch: expected {expected}, got {got}")]
+    AssetMismatch { expected: String, got: String },
+
     /// The payment amount is insufficient.
     #[error("Insufficient payment: required {required}, got {got}")]
     InsufficientPayment { required: String, got: String },
