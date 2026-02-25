@@ -19,7 +19,7 @@
 //! - `MIDEN_RPC_URL`   - Miden node RPC URL (default: https://rpc.testnet.miden.io)
 //! - `MIDEN_NETWORK`   - Network: "testnet" or "mainnet" (default: testnet)
 
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -87,6 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/supported", get(supported_handler))
         .route("/verify", post(verify_handler))
         .route("/settle", post(settle_handler))
+        .layer(DefaultBodyLimit::max(2 * 1024 * 1024)) // 2 MB
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state);
@@ -103,9 +104,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = tokio::net::TcpListener::bind(&bind_address).await?;
     tracing::info!("Listening on {bind_address}");
 
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
 
     Ok(())
+}
+
+/// Waits for a Ctrl-C signal to initiate graceful shutdown.
+async fn shutdown_signal() {
+    tokio::signal::ctrl_c()
+        .await
+        .expect("failed to install Ctrl-C handler");
+    tracing::info!("Shutdown signal received, draining connections...");
 }
 
 async fn root_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -120,13 +131,18 @@ async fn root_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
 async fn health_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     match state.facilitator.supported().await {
-        Ok(response) => {
-            let mut value = serde_json::to_value(response).unwrap();
-            if let Some(obj) = value.as_object_mut() {
-                obj.insert("faucetId".to_string(), serde_json::json!(state.faucet_id));
+        Ok(response) => match serde_json::to_value(response) {
+            Ok(mut value) => {
+                if let Some(obj) = value.as_object_mut() {
+                    obj.insert("faucetId".to_string(), serde_json::json!(state.faucet_id));
+                }
+                (StatusCode::OK, Json(value))
             }
-            (StatusCode::OK, Json(value))
-        }
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("serialization error: {e}") })),
+            ),
+        },
         Err(e) => (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({ "error": e.to_string() })),
@@ -136,7 +152,13 @@ async fn health_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse
 
 async fn supported_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     match state.facilitator.supported().await {
-        Ok(response) => (StatusCode::OK, Json(serde_json::to_value(response).unwrap())),
+        Ok(response) => match serde_json::to_value(response) {
+            Ok(value) => (StatusCode::OK, Json(value)),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("serialization error: {e}") })),
+            ),
+        },
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e.to_string() })),
@@ -162,7 +184,13 @@ async fn verify_handler(
     };
 
     match state.facilitator.verify(&request).await {
-        Ok(response) => (StatusCode::OK, Json(serde_json::to_value(response).unwrap())),
+        Ok(response) => match serde_json::to_value(response) {
+            Ok(value) => (StatusCode::OK, Json(value)),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("serialization error: {e}") })),
+            ),
+        },
         Err(e) => {
             tracing::warn!(error = %e, "Verify failed");
             (
@@ -194,7 +222,13 @@ async fn settle_handler(
     };
 
     match state.facilitator.settle(&request).await {
-        Ok(response) => (StatusCode::OK, Json(serde_json::to_value(response).unwrap())),
+        Ok(response) => match serde_json::to_value(response) {
+            Ok(value) => (StatusCode::OK, Json(value)),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("serialization error: {e}") })),
+            ),
+        },
         Err(e) => {
             tracing::warn!(error = %e, "Settle failed");
             (

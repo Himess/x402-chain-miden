@@ -100,19 +100,19 @@ fn test_chain_reference_roundtrip_via_chain_id() {
 
 #[test]
 fn test_miden_address_parse_hex() {
-    let addr: MidenAccountAddress = "0xaabbccddeeff00112233".parse().unwrap();
+    let addr: MidenAccountAddress = "0xaabbccddeeff00112233aabbccddee".parse().unwrap();
     assert!(addr.to_string().starts_with("0x"));
 }
 
 #[test]
 fn test_miden_address_parse_no_prefix() {
-    let addr: MidenAccountAddress = "aabbccddeeff00112233".parse().unwrap();
+    let addr: MidenAccountAddress = "aabbccddeeff00112233aabbccddee".parse().unwrap();
     assert!(addr.to_string().starts_with("0x"));
 }
 
 #[test]
 fn test_miden_address_roundtrip() {
-    let original: MidenAccountAddress = "0xdeadbeef".parse().unwrap();
+    let original: MidenAccountAddress = "0xdeadbeef0102030405060708090a0b".parse().unwrap();
     let s = original.to_string();
     let recovered: MidenAccountAddress = s.parse().unwrap();
     assert_eq!(original, recovered);
@@ -120,7 +120,7 @@ fn test_miden_address_roundtrip() {
 
 #[test]
 fn test_miden_address_serde_json() {
-    let addr: MidenAccountAddress = "0xdeadbeef".parse().unwrap();
+    let addr: MidenAccountAddress = "0xdeadbeef0102030405060708090a0b".parse().unwrap();
     let json = serde_json::to_string(&addr).unwrap();
     let recovered: MidenAccountAddress = serde_json::from_str(&json).unwrap();
     assert_eq!(addr, recovered);
@@ -169,7 +169,7 @@ mod server_tests {
 
     #[test]
     fn test_price_tag_creation() {
-        let recipient: MidenAccountAddress = "0xaabbccddee11223344".parse().unwrap();
+        let recipient: MidenAccountAddress = "0xaabbccddeeff00112233aabbccddee".parse().unwrap();
         let usdc = MidenTokenDeployment::testnet_usdc();
         let price_tag = V2MidenExact::price_tag(recipient.clone(), usdc.amount(1_000_000));
 
@@ -183,7 +183,7 @@ mod server_tests {
 
     #[test]
     fn test_price_tag_mainnet() {
-        let recipient: MidenAccountAddress = "0xaabbccddee11223344".parse().unwrap();
+        let recipient: MidenAccountAddress = "0xaabbccddeeff00112233aabbccddee".parse().unwrap();
         let usdc = MidenTokenDeployment::mainnet_usdc();
         let price_tag = V2MidenExact::price_tag(recipient, usdc.amount(500_000));
 
@@ -193,7 +193,7 @@ mod server_tests {
 
     #[test]
     fn test_price_tag_different_amounts() {
-        let recipient: MidenAccountAddress = "0xdeadbeef".parse().unwrap();
+        let recipient: MidenAccountAddress = "0xdeadbeef0102030405060708090a0b".parse().unwrap();
         let usdc = MidenTokenDeployment::testnet_usdc();
 
         // 0.01 USDC
@@ -207,7 +207,7 @@ mod server_tests {
 
     #[test]
     fn test_price_tag_requirements_serializable() {
-        let recipient: MidenAccountAddress = "0xaabbccddee".parse().unwrap();
+        let recipient: MidenAccountAddress = "0xaabbccddeeff00112233aabbccddee".parse().unwrap();
         let usdc = MidenTokenDeployment::testnet_usdc();
         let price_tag = V2MidenExact::price_tag(recipient, usdc.amount(1_000_000));
 
@@ -349,7 +349,7 @@ mod payload_tests {
     #[test]
     fn test_miden_payload_serde_roundtrip() {
         let payload = MidenExactPayload {
-            from: "0xdeadbeef".parse().unwrap(),
+            from: "0xdeadbeef0102030405060708090a0b".parse().unwrap(),
             proven_transaction: "aabbccdd".to_string(),
             transaction_id: "11223344".to_string(),
             transaction_inputs: "55667788".to_string(),
@@ -368,7 +368,7 @@ mod payload_tests {
     #[test]
     fn test_miden_payload_json_structure() {
         let payload = MidenExactPayload {
-            from: "0xaabb".parse().unwrap(),
+            from: "0xaabbccddeeff00112233aabbccddee".parse().unwrap(),
             proven_transaction: "cafebabe".to_string(),
             transaction_id: "deadbeef".to_string(),
             transaction_inputs: "01020304".to_string(),
@@ -385,10 +385,20 @@ mod payload_tests {
 
     #[test]
     fn test_miden_address_from_bytes() {
-        let bytes = vec![0xde, 0xad, 0xbe, 0xef];
-        let addr = MidenAccountAddress::from_bytes(bytes.clone());
+        // Valid 15-byte address
+        let bytes = vec![0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b];
+        let addr = MidenAccountAddress::from_bytes(bytes).unwrap();
         let hex_str = addr.to_string();
-        assert_eq!(hex_str, "0xdeadbeef");
+        assert_eq!(hex_str, "0xdeadbeef0102030405060708090a0b");
+    }
+
+    #[test]
+    fn test_miden_address_from_bytes_rejects_wrong_length() {
+        let short = vec![0xde, 0xad, 0xbe, 0xef];
+        assert!(MidenAccountAddress::from_bytes(short).is_err());
+
+        let long = vec![0u8; 16];
+        assert!(MidenAccountAddress::from_bytes(long).is_err());
     }
 }
 

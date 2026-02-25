@@ -190,7 +190,7 @@ mod tests {
     #[test]
     fn test_miden_exact_payload_serde() {
         let payload = MidenExactPayload {
-            from: "0xaabbccdd".parse().unwrap(),
+            from: "0xaabbccddeeff00112233aabbccddee".parse().unwrap(),
             proven_transaction: "deadbeef".to_string(),
             transaction_id: "0x1234".to_string(),
             transaction_inputs: "cafebabe".to_string(),
@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn test_miden_exact_payload_serde_with_privacy() {
         let payload = MidenExactPayload {
-            from: "0xaabbccdd".parse().unwrap(),
+            from: "0xaabbccddeeff00112233aabbccddee".parse().unwrap(),
             proven_transaction: "deadbeef".to_string(),
             transaction_id: "0x1234".to_string(),
             transaction_inputs: "cafebabe".to_string(),
@@ -229,7 +229,7 @@ mod tests {
     fn test_miden_exact_payload_backward_compat() {
         // Old JSON without privacyMode and noteData should deserialize with defaults
         let json = r#"{
-            "from": "0xaabbccdd",
+            "from": "0xaabbccddeeff00112233aabbccddee",
             "provenTransaction": "deadbeef",
             "transactionId": "0x1234",
             "transactionInputs": "cafebabe"

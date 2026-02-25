@@ -85,7 +85,8 @@ impl KnownNetworkMiden<MidenTokenDeployment> for MidenUSDC {
             chain_reference: MidenChainReference::mainnet(),
             // Mainnet faucet ID — will be set at mainnet launch (expected late March 2026).
             // Until then override via MIDEN_TESTNET_FAUCET_ID or configure at runtime.
-            faucet_id: MidenAccountAddress::from_bytes(vec![0; 15]),
+            faucet_id: MidenAccountAddress::from_bytes(vec![0; 15])
+                .expect("15-byte placeholder is always valid"),
             decimals: 6,
         }
     }

@@ -120,7 +120,7 @@ x402-chain-miden/
 │   ├── server-example/         # Resource server with 402 payment wall
 │   └── client-example/         # Client with mock Miden signer
 ├── tests/
-│   └── integration_test.rs     # 33 integration tests + 7 miden-native
+│   └── integration_test.rs     # 34 integration tests + 7 miden-native
 └── docs/
     └── architecture.md         # Full architecture documentation
 ```
@@ -155,19 +155,9 @@ cargo run -p x402-miden-client-example
 ### Tests
 
 ```bash
-# All tests (54 total: 14 unit + 33 integration + 7 miden-native)
+# All tests (65 total: 22 unit + 34 integration + 7 miden-native + 2 doc-tests)
 cargo test --workspace --features full
 ```
-
-## Status
-
-This crate provides the complete type system and trait implementations for x402-Miden integration. The provider module (`MidenChainProvider`) contains TODO stubs for:
-
-- Submitting proven transactions to the Miden node RPC
-- Querying account balances from account vaults
-- Full STARK proof verification in the facilitator
-
-These will be implemented once the `miden-client` and `miden-tx` crates are added as dependencies.
 
 ## License
 

@@ -25,16 +25,30 @@ pub const MIDEN_NAMESPACE: &str = "miden";
 /// ```
 /// use x402_chain_miden::chain::MidenAccountAddress;
 ///
-/// let addr: MidenAccountAddress = "0xabcdef1234567890abcdef1234567890".parse().unwrap();
+/// // 15 bytes = 30 hex chars
+/// let addr: MidenAccountAddress = "0xabcdef1234567890abcdef12345678".parse().unwrap();
 /// assert!(addr.to_string().starts_with("0x"));
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct MidenAccountAddress(Vec<u8>);
 
+/// The expected byte length of a Miden account ID (120 bits = 15 bytes).
+pub const MIDEN_ACCOUNT_ID_BYTE_LEN: usize = 15;
+
 impl MidenAccountAddress {
     /// Creates a new MidenAccountAddress from raw bytes.
-    pub fn from_bytes(bytes: Vec<u8>) -> Self {
-        Self(bytes)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is not exactly 15 bytes.
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, MidenAddressParseError> {
+        if bytes.len() != MIDEN_ACCOUNT_ID_BYTE_LEN {
+            return Err(MidenAddressParseError::InvalidLength {
+                expected: MIDEN_ACCOUNT_ID_BYTE_LEN,
+                got: bytes.len(),
+            });
+        }
+        Ok(Self(bytes))
     }
 
     /// Returns the raw bytes of the account ID.
@@ -55,6 +69,12 @@ impl FromStr for MidenAccountAddress {
         let s = s.strip_prefix("0x").unwrap_or(s);
         let bytes =
             hex::decode(s).map_err(|e| MidenAddressParseError::InvalidHex(e.to_string()))?;
+        if bytes.len() != MIDEN_ACCOUNT_ID_BYTE_LEN {
+            return Err(MidenAddressParseError::InvalidLength {
+                expected: MIDEN_ACCOUNT_ID_BYTE_LEN,
+                got: bytes.len(),
+            });
+        }
         Ok(Self(bytes))
     }
 }
@@ -112,6 +132,10 @@ pub enum MidenAddressParseError {
     /// The hex string is invalid.
     #[error("Invalid hex: {0}")]
     InvalidHex(String),
+
+    /// The byte length is wrong (expected 15 bytes / 120 bits).
+    #[error("Invalid length: expected {expected} bytes, got {got}")]
+    InvalidLength { expected: usize, got: usize },
 
     /// The account ID is invalid (wrong length, checksum, etc.).
     #[cfg(feature = "miden-native")]
@@ -371,22 +395,30 @@ mod tests {
 
     #[test]
     fn test_miden_address_roundtrip() {
-        let hex_str = "0xabcdef1234567890abcdef1234567890";
+        let hex_str = "0xabcdef1234567890abcdef12345678"; // 15 bytes
         let addr: MidenAccountAddress = hex_str.parse().unwrap();
         assert_eq!(addr.to_string(), hex_str);
     }
 
     #[test]
     fn test_miden_address_without_prefix() {
-        let addr: MidenAccountAddress = "abcdef".parse().unwrap();
-        assert_eq!(addr.to_string(), "0xabcdef");
+        let addr: MidenAccountAddress = "abcdef1234567890abcdef12345678".parse().unwrap();
+        assert_eq!(addr.to_string(), "0xabcdef1234567890abcdef12345678");
+    }
+
+    #[test]
+    fn test_miden_address_rejects_wrong_length() {
+        // Too short (3 bytes)
+        assert!("abcdef".parse::<MidenAccountAddress>().is_err());
+        // Too long (16 bytes)
+        assert!("abcdef1234567890abcdef1234567890".parse::<MidenAccountAddress>().is_err());
     }
 
     #[test]
     fn test_token_deployment_amount() {
         let deployment = MidenTokenDeployment {
             chain_reference: MidenChainReference::testnet(),
-            faucet_id: "0xaabbccdd".parse().unwrap(),
+            faucet_id: "0xaabbccddeeff00112233aabbccddee".parse().unwrap(),
             decimals: 6,
         };
         let amount = deployment.amount(1_000_000);
@@ -397,7 +429,7 @@ mod tests {
     fn test_token_deployment_parse_whole() {
         let deployment = MidenTokenDeployment {
             chain_reference: MidenChainReference::testnet(),
-            faucet_id: "0xaabbccdd".parse().unwrap(),
+            faucet_id: "0xaabbccddeeff00112233aabbccddee".parse().unwrap(),
             decimals: 6,
         };
         let amount = deployment.parse("100").unwrap();
@@ -408,7 +440,7 @@ mod tests {
     fn test_token_deployment_parse_with_decimals() {
         let deployment = MidenTokenDeployment {
             chain_reference: MidenChainReference::testnet(),
-            faucet_id: "0xaabbccdd".parse().unwrap(),
+            faucet_id: "0xaabbccddeeff00112233aabbccddee".parse().unwrap(),
             decimals: 6,
         };
         let amount = deployment.parse("1.50").unwrap();
@@ -419,7 +451,7 @@ mod tests {
     fn test_token_deployment_parse_too_many_decimals() {
         let deployment = MidenTokenDeployment {
             chain_reference: MidenChainReference::testnet(),
-            faucet_id: "0xaabbccdd".parse().unwrap(),
+            faucet_id: "0xaabbccddeeff00112233aabbccddee".parse().unwrap(),
             decimals: 2,
         };
         let result = deployment.parse("1.234");
@@ -430,7 +462,7 @@ mod tests {
     fn test_token_deployment_parse_smallest_unit() {
         let deployment = MidenTokenDeployment {
             chain_reference: MidenChainReference::testnet(),
-            faucet_id: "0xaabbccdd".parse().unwrap(),
+            faucet_id: "0xaabbccddeeff00112233aabbccddee".parse().unwrap(),
             decimals: 6,
         };
         let amount = deployment.parse("0.000001").unwrap();
@@ -439,9 +471,9 @@ mod tests {
 
     #[test]
     fn test_miden_address_serde_roundtrip() {
-        let addr: MidenAccountAddress = "0xabcdef1234".parse().unwrap();
+        let addr: MidenAccountAddress = "0xabcdef1234567890abcdef12345678".parse().unwrap();
         let json = serde_json::to_string(&addr).unwrap();
-        assert_eq!(json, "\"0xabcdef1234\"");
+        assert_eq!(json, "\"0xabcdef1234567890abcdef12345678\"");
         let deserialized: MidenAccountAddress = serde_json::from_str(&json).unwrap();
         assert_eq!(addr, deserialized);
     }
