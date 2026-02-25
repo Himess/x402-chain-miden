@@ -95,7 +95,7 @@ Each candidate wraps a `MidenPayloadSigner` that:
 ### 3. Facilitator Verifies Payment
 
 The facilitator receives the payment payload and:
-1. Parses `FacilitatorVerifyRequest` from the raw JSON
+1. Parses `VerifyRequest` from the raw JSON
 2. Checks `accepted` requirements match `provided` requirements
 3. **TODO**: Deserializes ProvenTransaction, verifies STARK proof
 4. **TODO**: Checks output notes contain P2ID to correct recipient with correct amount

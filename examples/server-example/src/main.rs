@@ -16,6 +16,8 @@
 //! - `GET /paid-content`  - Returns 402 with Miden payment requirements
 //! - `GET /price-info`    - Shows the price tag configuration
 
+use base64::{Engine, engine::general_purpose};
+
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
@@ -88,7 +90,7 @@ async fn paid_content_handler() -> impl IntoResponse {
     });
 
     // Encode as base64 for the PAYMENT-REQUIRED header
-    let encoded = base64_encode(&serde_json::to_vec(&payment_required).unwrap());
+    let encoded = general_purpose::STANDARD.encode(serde_json::to_vec(&payment_required).unwrap());
 
     (
         StatusCode::PAYMENT_REQUIRED,
@@ -115,39 +117,4 @@ async fn price_info_handler() -> impl IntoResponse {
         "max_timeout_seconds": price_tag.requirements.max_timeout_seconds,
         "description": "1 USDC on Miden testnet",
     }))
-}
-
-fn base64_encode(input: &[u8]) -> String {
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = Vec::with_capacity((input.len() + 2) / 3 * 4);
-    let mut i = 0;
-    while i + 2 < input.len() {
-        let n = ((input[i] as u32) << 16) | ((input[i + 1] as u32) << 8) | input[i + 2] as u32;
-        out.extend_from_slice(&[
-            CHARS[(n >> 18 & 0x3F) as usize],
-            CHARS[(n >> 12 & 0x3F) as usize],
-            CHARS[(n >> 6 & 0x3F) as usize],
-            CHARS[(n & 0x3F) as usize],
-        ]);
-        i += 3;
-    }
-    let rem = input.len() - i;
-    if rem == 2 {
-        let n = ((input[i] as u32) << 16) | ((input[i + 1] as u32) << 8);
-        out.extend_from_slice(&[
-            CHARS[(n >> 18 & 0x3F) as usize],
-            CHARS[(n >> 12 & 0x3F) as usize],
-            CHARS[(n >> 6 & 0x3F) as usize],
-            b'=',
-        ]);
-    } else if rem == 1 {
-        let n = (input[i] as u32) << 16;
-        out.extend_from_slice(&[
-            CHARS[(n >> 18 & 0x3F) as usize],
-            CHARS[(n >> 12 & 0x3F) as usize],
-            b'=',
-            b'=',
-        ]);
-    }
-    String::from_utf8(out).unwrap()
 }

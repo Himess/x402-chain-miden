@@ -51,7 +51,7 @@ impl X402SchemeFacilitator for V2MidenExactFacilitator {
         &self,
         request: &proto::VerifyRequest,
     ) -> Result<proto::VerifyResponse, X402SchemeFacilitatorError> {
-        let verify_request = types::FacilitatorVerifyRequest::try_from(request.clone())?;
+        let verify_request = types::VerifyRequest::try_from(request)?;
         let verify_response = verify_miden_payment(&verify_request).await?;
         Ok(verify_response.into())
     }
@@ -60,7 +60,7 @@ impl X402SchemeFacilitator for V2MidenExactFacilitator {
         &self,
         request: &proto::SettleRequest,
     ) -> Result<proto::SettleResponse, X402SchemeFacilitatorError> {
-        let settle_request = types::FacilitatorSettleRequest::try_from(request.clone())?;
+        let settle_request = types::SettleRequest::try_from(request)?;
         let settle_response = settle_miden_payment(&self.provider, &settle_request).await?;
         Ok(settle_response.into())
     }
@@ -118,7 +118,7 @@ fn check_requirements_match(
 /// 5. Returns the verified payer account ID
 #[cfg(feature = "miden-native")]
 async fn verify_miden_payment(
-    request: &types::FacilitatorVerifyRequest,
+    request: &types::VerifyRequest,
 ) -> Result<v2::VerifyResponse, MidenExactError> {
     use crate::chain::MidenAccountAddress;
     use miden_protocol::transaction::{OutputNote, ProvenTransaction};
@@ -217,7 +217,7 @@ async fn verify_miden_payment(
 /// without the miden-native feature.
 #[cfg(not(feature = "miden-native"))]
 async fn verify_miden_payment(
-    request: &types::FacilitatorVerifyRequest,
+    request: &types::VerifyRequest,
 ) -> Result<v2::VerifyResponse, MidenExactError> {
     let payload = &request.payment_payload;
     let requirements = &request.payment_requirements;
@@ -245,7 +245,7 @@ async fn verify_miden_payment(
 /// 3. Returns the transaction ID
 async fn settle_miden_payment(
     provider: &MidenChainProvider,
-    request: &types::FacilitatorSettleRequest,
+    request: &types::SettleRequest,
 ) -> Result<v2::SettleResponse, MidenExactError> {
     // First verify
     verify_miden_payment(request).await?;

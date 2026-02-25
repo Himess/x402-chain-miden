@@ -84,35 +84,6 @@ pub type VerifyRequest = v2::VerifyRequest<PaymentPayload, PaymentRequirements>;
 /// Type alias for V2 settle requests (same structure as verify).
 pub type SettleRequest = VerifyRequest;
 
-/// Facilitator-side typed verify/settle request.
-///
-/// Used internally by the facilitator to parse the raw JSON request
-/// into strongly-typed Miden payment structures.
-#[cfg(feature = "facilitator")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FacilitatorVerifyRequest {
-    /// Protocol version (always 2).
-    pub x402_version: v2::X402Version2,
-    /// The signed payment payload containing the proven transaction.
-    pub payment_payload: PaymentPayload,
-    /// The payment requirements to verify against.
-    pub payment_requirements: PaymentRequirements,
-}
-
-#[cfg(feature = "facilitator")]
-impl TryFrom<x402_types::proto::VerifyRequest> for FacilitatorVerifyRequest {
-    type Error = x402_types::proto::PaymentVerificationError;
-
-    fn try_from(value: x402_types::proto::VerifyRequest) -> Result<Self, Self::Error> {
-        let value = serde_json::from_str(value.as_str())?;
-        Ok(value)
-    }
-}
-
-#[cfg(feature = "facilitator")]
-pub type FacilitatorSettleRequest = FacilitatorVerifyRequest;
-
 /// Errors specific to Miden payment processing.
 #[derive(Debug, thiserror::Error)]
 pub enum MidenExactError {
