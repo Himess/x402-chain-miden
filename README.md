@@ -104,6 +104,61 @@ let settle_response = facilitator.settle(&settle_request).await?;
 - **Scheme:** `exact`
 - **ID:** `v2-miden-exact`
 
+## Workspace Structure
+
+```
+x402-chain-miden/
+├── src/                        # Core library (x402-chain-miden crate)
+│   ├── lib.rs                  # Public API re-exports
+│   ├── chain/                  # Chain types, provider, config
+│   ├── networks.rs             # Known networks + USDC deployments
+│   └── v2_miden_exact/         # V2 exact scheme (server, client, facilitator)
+├── facilitator/                # Standalone facilitator HTTP server
+│   ├── src/main.rs             # Axum server: /verify, /settle, /supported, /health
+│   └── Dockerfile              # Multi-stage Docker build
+├── examples/
+│   ├── server-example/         # Resource server with 402 payment wall
+│   └── client-example/         # Client with mock Miden signer
+├── tests/
+│   └── integration_test.rs     # 33 integration tests
+└── docs/
+    └── architecture.md         # Full architecture documentation
+```
+
+## Running
+
+### Facilitator Server
+
+```bash
+# Default: testnet, port 4020
+cargo run -p x402-miden-facilitator
+
+# Custom config
+MIDEN_NETWORK=mainnet MIDEN_RPC_URL=https://rpc.mainnet.miden.io PORT=8080 \
+  cargo run -p x402-miden-facilitator
+
+# Docker
+docker build -t x402-miden-facilitator -f facilitator/Dockerfile .
+docker run -p 4020:4020 x402-miden-facilitator
+```
+
+### Examples
+
+```bash
+# Server example (port 3000)
+cargo run -p x402-miden-server-example
+
+# Client example
+cargo run -p x402-miden-client-example
+```
+
+### Tests
+
+```bash
+# All tests (47 total: 14 unit + 33 integration)
+cargo test --workspace --features full
+```
+
 ## Status
 
 This crate provides the complete type system and trait implementations for x402-Miden integration. The provider module (`MidenChainProvider`) contains TODO stubs for:

@@ -1,0 +1,24 @@
+[package]
+name = "x402-miden-facilitator"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Standalone x402 facilitator server for the Miden blockchain"
+
+[[bin]]
+name = "x402-miden-facilitator"
+path = "src/main.rs"
+
+[dependencies]
+x402-chain-miden = { path = "..", features = ["facilitator"] }
+x402-types = { version = "1.0" }
+axum = { version = "0.8" }
+tokio = { version = "1.35", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0" }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

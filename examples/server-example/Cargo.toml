@@ -1,0 +1,20 @@
+[package]
+name = "x402-miden-server-example"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "server-example"
+path = "src/main.rs"
+
+[dependencies]
+x402-chain-miden = { path = "../..", features = ["server"] }
+x402-types = { version = "1.0" }
+axum = { version = "0.8" }
+tokio = { version = "1.35", features = ["full"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

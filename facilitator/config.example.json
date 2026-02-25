@@ -1,0 +1,6 @@
+{
+  "port": 4020,
+  "host": "0.0.0.0",
+  "miden_rpc_url": "https://rpc.testnet.miden.io",
+  "miden_network": "testnet"
+}

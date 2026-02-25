@@ -185,12 +185,28 @@ impl TryFrom<&ChainId> for MidenChainReference {
     }
 }
 
+impl TryFrom<&str> for MidenChainReference {
+    type Error = MidenChainReferenceFormatError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "testnet" | "mainnet" => Ok(MidenChainReference(value.to_string())),
+            _ => Err(MidenChainReferenceFormatError::InvalidReference(
+                value.to_string(),
+            )),
+        }
+    }
+}
+
 /// Error returned when converting a [`ChainId`] to a [`MidenChainReference`].
 #[derive(Debug, thiserror::Error)]
 pub enum MidenChainReferenceFormatError {
     /// The chain ID namespace is not `miden`.
     #[error("Invalid namespace {0}, expected miden")]
     InvalidNamespace(String),
+    /// The reference string is not a known Miden network.
+    #[error("Invalid reference {0}, expected testnet or mainnet")]
+    InvalidReference(String),
 }
 
 // ============================================================================
