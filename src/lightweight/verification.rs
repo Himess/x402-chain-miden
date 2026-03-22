@@ -147,10 +147,10 @@ pub async fn verify_lightweight_payment(
     let expected_note_id_normalized = normalize_hex_string(&expected_hex);
 
     if agent_note_id_normalized != expected_note_id_normalized {
-        return Err(MidenExactError::PaymentNotFound(format!(
-            "NoteId mismatch: agent sent {}, expected {}",
-            payment_header.note_id, expected_hex
-        )));
+        return Err(MidenExactError::NoteIdMismatch {
+            expected: expected_hex,
+            got: payment_header.note_id.clone(),
+        });
     }
 
     // ------------------------------------------------------------------
