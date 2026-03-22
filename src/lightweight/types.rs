@@ -241,7 +241,7 @@ impl PaymentContext {
             .duration_since(UNIX_EPOCH)
             .expect("system clock is before Unix epoch")
             .as_secs();
-        now.saturating_sub(self.created_at) > timeout_secs
+        now.saturating_sub(self.created_at) >= timeout_secs
     }
 }
 
