@@ -370,14 +370,16 @@ impl FacilitatorChainState {
         use miden_client::rpc::{GrpcClient, NodeRpcClient};
         use miden_protocol::block::BlockNumber;
 
-        let endpoint = self
-            .rpc_url
-            .as_str()
-            .try_into()
-            .map_err(|e: miden_client::rpc::RpcEndpoint| {
-                MidenExactError::ProviderError(format!("Invalid RPC URL '{}': {e}", self.rpc_url))
-            })
-            .unwrap_or_default();
+        let endpoint =
+            self.rpc_url
+                .as_str()
+                .try_into()
+                .map_err(|e: miden_client::rpc::RpcEndpoint| {
+                    MidenExactError::ProviderError(format!(
+                        "Invalid RPC URL '{}': {e}",
+                        self.rpc_url
+                    ))
+                })?;
 
         let rpc_client = GrpcClient::new(&endpoint, 10_000);
 
@@ -423,14 +425,16 @@ impl FacilitatorChainState {
     async fn fetch_latest_block_header(&self) -> Result<CachedBlockHeader, MidenExactError> {
         use miden_client::rpc::{GrpcClient, NodeRpcClient};
 
-        let endpoint = self
-            .rpc_url
-            .as_str()
-            .try_into()
-            .map_err(|e: miden_client::rpc::RpcEndpoint| {
-                MidenExactError::ProviderError(format!("Invalid RPC URL '{}': {e}", self.rpc_url))
-            })
-            .unwrap_or_default();
+        let endpoint =
+            self.rpc_url
+                .as_str()
+                .try_into()
+                .map_err(|e: miden_client::rpc::RpcEndpoint| {
+                    MidenExactError::ProviderError(format!(
+                        "Invalid RPC URL '{}': {e}",
+                        self.rpc_url
+                    ))
+                })?;
 
         let rpc_client = GrpcClient::new(&endpoint, 10_000);
 

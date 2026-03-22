@@ -113,8 +113,8 @@ async fn price_info_handler() -> impl IntoResponse {
         "network": price_tag.requirements.network.to_string(),
         "amount": price_tag.requirements.amount,
         "asset": price_tag.requirements.asset.to_string(),
-        "pay_to": price_tag.requirements.pay_to.to_string(),
-        "max_timeout_seconds": price_tag.requirements.max_timeout_seconds,
+        "payTo": price_tag.requirements.pay_to.to_string(),
+        "maxTimeoutSeconds": price_tag.requirements.max_timeout_seconds,
         "description": "1 USDC on Miden testnet",
     }))
 }

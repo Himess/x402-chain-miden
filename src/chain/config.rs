@@ -12,6 +12,7 @@ use super::MidenChainReference;
 /// This configuration is used to initialize a [`MidenChainProvider`](super::provider::MidenChainProvider)
 /// for facilitator-side operations (verification and settlement).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MidenChainConfig {
     /// The chain reference (e.g., `testnet`, `mainnet`).
     pub chain_reference: MidenChainReference,

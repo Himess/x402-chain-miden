@@ -48,7 +48,11 @@ impl MidenChainProvider {
             rpc_url: config.rpc_url.clone(),
             #[cfg(feature = "miden-client-native")]
             rpc_client: {
-                let endpoint = config.rpc_url.as_str().try_into().unwrap_or_default();
+                let endpoint = config
+                    .rpc_url
+                    .as_str()
+                    .try_into()
+                    .expect("RPC URL must be a valid endpoint");
                 std::sync::Arc::new(miden_client::rpc::GrpcClient::new(&endpoint, 10_000))
             },
             #[cfg(feature = "miden-client-native")]

@@ -83,9 +83,12 @@ impl KnownNetworkMiden<MidenTokenDeployment> for MidenUSDC {
     fn miden_mainnet() -> MidenTokenDeployment {
         MidenTokenDeployment {
             chain_reference: MidenChainReference::mainnet(),
-            // Mainnet faucet ID — will be set at mainnet launch (expected late March 2026).
-            // Until then override via MIDEN_TESTNET_FAUCET_ID or configure at runtime.
-            faucet_id: MidenAccountAddress::from_bytes(&[0; 15])
+            // Mainnet faucet ID will be set at mainnet launch.
+            // Using a distinctive placeholder that will fail loudly if accidentally used.
+            // All 0xFF bytes are an invalid account ID in Miden, so any attempt to
+            // transact with this placeholder will produce an immediate error rather
+            // than a silent mis-payment.
+            faucet_id: MidenAccountAddress::from_bytes(&[0xFF; 15])
                 .expect("15-byte placeholder is always valid"),
             decimals: 6,
         }
@@ -93,12 +96,18 @@ impl KnownNetworkMiden<MidenTokenDeployment> for MidenUSDC {
 }
 
 impl MidenTokenDeployment {
-    /// Returns a testnet USDC-equivalent token deployment.
+    /// Convenience alias for [`MidenUSDC::miden_testnet()`].
+    ///
+    /// Returns a testnet USDC-equivalent token deployment. Delegates to
+    /// [`KnownNetworkMiden::miden_testnet()`] on [`MidenUSDC`].
     pub fn testnet_usdc() -> Self {
         MidenUSDC::miden_testnet()
     }
 
-    /// Returns a mainnet USDC-equivalent token deployment.
+    /// Convenience alias for [`MidenUSDC::miden_mainnet()`].
+    ///
+    /// Returns a mainnet USDC-equivalent token deployment. Delegates to
+    /// [`KnownNetworkMiden::miden_mainnet()`] on [`MidenUSDC`].
     pub fn mainnet_usdc() -> Self {
         MidenUSDC::miden_mainnet()
     }

@@ -147,12 +147,12 @@ impl LightweightPayerLike for LightweightMidenPayer {
         requirement: &LightweightPaymentRequirement,
     ) -> Result<LightweightPaymentHeader, x402_types::scheme::client::X402Error> {
         use miden_client::note::build_p2id_recipient;
+        use miden_protocol::Word;
         use miden_protocol::account::AccountId;
         use miden_protocol::asset::{Asset, FungibleAsset};
         use miden_protocol::note::{Note, NoteAssets, NoteMetadata, NoteTag, NoteType};
         use miden_protocol::transaction::OutputNote;
         use miden_protocol::utils::serde::Serializable;
-        use miden_protocol::{Felt, Word};
         use x402_types::scheme::client::X402Error;
 
         // 1. Parse account IDs
@@ -171,21 +171,8 @@ impl LightweightPayerLike for LightweightMidenPayer {
                     .into(),
             )
         })?;
-        let serial_bytes = hex::decode(serial_num_hex.strip_prefix("0x").unwrap_or(serial_num_hex))
-            .map_err(|e| X402Error::SigningError(format!("Invalid serial_num hex: {e}")))?;
-        if serial_bytes.len() != 32 {
-            return Err(X402Error::SigningError(format!(
-                "serial_num must be 32 bytes, got {}",
-                serial_bytes.len()
-            )));
-        }
-        // Convert 32 bytes into Word = [Felt; 4], each Felt from 8 bytes LE
-        let serial_num: Word = [
-            Felt::new(u64::from_le_bytes(serial_bytes[0..8].try_into().unwrap())),
-            Felt::new(u64::from_le_bytes(serial_bytes[8..16].try_into().unwrap())),
-            Felt::new(u64::from_le_bytes(serial_bytes[16..24].try_into().unwrap())),
-            Felt::new(u64::from_le_bytes(serial_bytes[24..32].try_into().unwrap())),
-        ];
+        let serial_num: Word =
+            super::types::parse_serial_num_hex(serial_num_hex).map_err(X402Error::SigningError)?;
 
         // 3. Build P2ID NoteRecipient with the server's serial_num
         //    This ensures the note's recipient_digest matches what the server expects.

@@ -80,14 +80,14 @@ pub fn create_payment_requirement(
     amount: u64,
     note_tag: u32,
     network: x402_types::chain::ChainId,
-) -> (LightweightPaymentRequirement, PaymentContext) {
+) -> Result<(LightweightPaymentRequirement, PaymentContext), String> {
     // Generate a random serial number for this payment request.
     // In production this should use a CSPRNG; for now we use a simple
     // approach that works across feature gates.
     let serial_num_hex = generate_serial_num_hex();
 
     // Compute recipient_digest (feature-gated)
-    let recipient_digest = compute_recipient_digest(pay_to, &serial_num_hex);
+    let recipient_digest = compute_recipient_digest(pay_to, &serial_num_hex)?;
 
     let requirement = LightweightPaymentRequirement {
         recipient_digest: recipient_digest.clone(),
@@ -111,7 +111,7 @@ pub fn create_payment_requirement(
         Some(serial_num_hex),
     );
 
-    (requirement, context)
+    Ok((requirement, context))
 }
 
 /// Generates a hex-encoded random serial number (32 bytes).
@@ -136,50 +136,34 @@ fn generate_serial_num_hex() -> String {
 ///
 /// where `inputs_commitment = Rpo256::hash_elements([target.suffix(), target.prefix()])`.
 #[cfg(feature = "miden-native")]
-fn compute_recipient_digest(pay_to: &str, serial_num_hex: &str) -> String {
-    use miden_protocol::Felt;
-    use miden_protocol::Word;
+fn compute_recipient_digest(pay_to: &str, serial_num_hex: &str) -> Result<String, String> {
+    use super::types::parse_serial_num_hex;
     use miden_protocol::account::AccountId;
     use miden_standards::note::utils::build_p2id_recipient;
 
-    // Decode serial_num hex into raw bytes.
-    let serial_bytes = hex::decode(serial_num_hex.strip_prefix("0x").unwrap_or(serial_num_hex))
-        .expect("serial_num must be valid hex");
-    assert!(
-        serial_bytes.len() == 32,
-        "serial_num must be exactly 32 bytes"
-    );
-
-    // Convert 32 bytes into a Word (4 x Felt, each from 8 LE bytes).
-    // We use Felt::new() which accepts any u64 (internally uses non-canonical representation),
-    // so values >= field modulus are automatically reduced.
-    let serial_num = Word::new([
-        Felt::new(u64::from_le_bytes(serial_bytes[0..8].try_into().unwrap())),
-        Felt::new(u64::from_le_bytes(serial_bytes[8..16].try_into().unwrap())),
-        Felt::new(u64::from_le_bytes(serial_bytes[16..24].try_into().unwrap())),
-        Felt::new(u64::from_le_bytes(serial_bytes[24..32].try_into().unwrap())),
-    ]);
+    // Parse the 32-byte serial number from hex into a Word ([Felt; 4]).
+    let serial_num = parse_serial_num_hex(serial_num_hex)?;
 
     // Parse the target account ID from hex.
-    let target =
-        AccountId::from_hex(pay_to).expect("pay_to must be a valid Miden account ID hex string");
+    let target = AccountId::from_hex(pay_to)
+        .map_err(|e| format!("pay_to is not a valid Miden account ID: {e}"))?;
 
     // Build the P2ID recipient using the miden-standards helper.
     // This internally creates:
     //   - NoteScript from WellKnownNote::P2ID
     //   - NoteInputs from [target.suffix(), target.prefix().as_felt()]
     //   - NoteRecipient which computes the digest via RPO256 hashing
-    let recipient =
-        build_p2id_recipient(target, serial_num).expect("Failed to build P2ID recipient");
+    let recipient = build_p2id_recipient(target, serial_num)
+        .map_err(|e| format!("Failed to build P2ID recipient: {e}"))?;
 
     // Return the digest as a 0x-prefixed hex string.
     // Word::to_hex() already returns "0x"-prefixed hex with LE byte encoding.
-    recipient.digest().to_hex()
+    Ok(recipient.digest().to_hex())
 }
 
 /// Non-cryptographic placeholder digest (no miden-native).
 #[cfg(not(feature = "miden-native"))]
-fn compute_recipient_digest(pay_to: &str, serial_num_hex: &str) -> String {
+fn compute_recipient_digest(pay_to: &str, serial_num_hex: &str) -> Result<String, String> {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     let mut hasher = DefaultHasher::new();
@@ -189,12 +173,16 @@ fn compute_recipient_digest(pay_to: &str, serial_num_hex: &str) -> String {
     let mut out = [0u8; 32];
     out[..8].copy_from_slice(&h.to_le_bytes());
     out[8..16].copy_from_slice(&h.to_be_bytes());
-    format!("0x{}", hex::encode(out))
+    Ok(format!("0x{}", hex::encode(out)))
 }
 
-/// Errors that can occur during lightweight payment verification.
+/// Errors that can occur during structural lightweight payment verification.
+///
+/// Used only in tests for the structural (non-cryptographic) verification path.
+/// Production code uses [`crate::v2_miden_exact::MidenExactError`] instead.
+#[cfg(test)]
 #[derive(Debug, thiserror::Error)]
-pub enum LightweightVerifyError {
+pub(crate) enum LightweightVerifyError {
     /// The payment context was not found (unknown or expired).
     #[error("Payment context not found: {0}")]
     ContextNotFound(String),

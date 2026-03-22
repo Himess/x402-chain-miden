@@ -329,13 +329,29 @@ async fn payment_requirement_handler(
         .payment_requirement_requests_total
         .fetch_add(1, Ordering::Relaxed);
 
-    let (requirement, context) = create_payment_requirement(
+    let (requirement, context) = match create_payment_requirement(
         &body.recipient,
         &body.asset,
         body.amount,
         body.note_tag,
         state.chain_id.clone(),
-    );
+    ) {
+        Ok(result) => result,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                recipient = %body.recipient,
+                "Failed to create payment requirement"
+            );
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "invalid_request",
+                    "message": e,
+                })),
+            );
+        }
+    };
 
     // Generate a unique context ID using cryptographically secure random bytes
     let context_id = {
@@ -407,42 +423,46 @@ async fn verify_lightweight_handler(
         .lightweight_verify_requests_total
         .fetch_add(1, Ordering::Relaxed);
 
-    // 1. Look up the payment context
-    let context = match state.payment_contexts.read() {
-        Ok(contexts) => match contexts.get(&body.payment_context_id) {
-            Some(ctx) => {
-                // Clone the relevant data we need for verification
-                PaymentContext::new(
-                    ctx.recipient_digest.clone(),
-                    ctx.asset_faucet_id.clone(),
-                    ctx.amount,
-                    ctx.note_tag,
-                    ctx.serial_num.clone(),
-                )
+    // 1. Prune expired contexts, then look up the requested one.
+    //    We take a write lock so we can remove stale entries before lookup.
+    let context = match state.payment_contexts.write() {
+        Ok(mut contexts) => {
+            contexts.retain(|_, ctx| !ctx.is_expired(DEFAULT_CONTEXT_TIMEOUT_SECS));
+            match contexts.get(&body.payment_context_id) {
+                Some(ctx) => {
+                    // Clone the relevant data we need for verification
+                    PaymentContext::new(
+                        ctx.recipient_digest.clone(),
+                        ctx.asset_faucet_id.clone(),
+                        ctx.amount,
+                        ctx.note_tag,
+                        ctx.serial_num.clone(),
+                    )
+                }
+                None => {
+                    state
+                        .metrics
+                        .lightweight_verify_errors_total
+                        .fetch_add(1, Ordering::Relaxed);
+                    return (
+                        StatusCode::NOT_FOUND,
+                        Json(serde_json::json!({
+                            "error": "context_not_found",
+                            "message": format!(
+                                "Payment context '{}' not found or expired",
+                                body.payment_context_id
+                            ),
+                        })),
+                    );
+                }
             }
-            None => {
-                state
-                    .metrics
-                    .lightweight_verify_errors_total
-                    .fetch_add(1, Ordering::Relaxed);
-                return (
-                    StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({
-                        "error": "context_not_found",
-                        "message": format!(
-                            "Payment context '{}' not found or expired",
-                            body.payment_context_id
-                        ),
-                    })),
-                );
-            }
-        },
+        }
         Err(e) => {
             state
                 .metrics
                 .lightweight_verify_errors_total
                 .fetch_add(1, Ordering::Relaxed);
-            tracing::error!(error = %e, "Failed to acquire read lock on payment contexts");
+            tracing::error!(error = %e, "Failed to acquire write lock on payment contexts");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({

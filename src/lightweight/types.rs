@@ -132,6 +132,9 @@ pub struct LightweightPaymentHeader {
     /// returned by the Miden node after the note is included in a block.
     /// The index is computed as `batch_idx * MAX_OUTPUT_NOTES_PER_BATCH + note_idx_in_batch`.
     /// Needed for `SparseMerklePath::verify()`.
+    ///
+    /// Miden's note tree supports up to 2^16 notes per block (`SimpleSmt<16>`),
+    /// so `u16` is sufficient.
     pub note_index: u16,
 
     /// The note metadata (hex-encoded serialized `NoteMetadata`).
@@ -186,12 +189,17 @@ pub struct PaymentContext {
     /// the server first verifies a payment header against this context.
     pub expected_note_id: Option<String>,
 
-    /// When this context was created, for expiry tracking.
-    pub created_at: std::time::Instant,
+    /// When this context was created, as a Unix timestamp (seconds since epoch).
+    ///
+    /// Using `u64` instead of `std::time::Instant` makes `PaymentContext`
+    /// serializable and persistable across process restarts.
+    pub created_at: u64,
 }
 
 impl PaymentContext {
     /// Creates a new payment context.
+    ///
+    /// `created_at` is set to the current time as seconds since the Unix epoch.
     ///
     /// # Parameters
     ///
@@ -207,6 +215,11 @@ impl PaymentContext {
         note_tag: u32,
         serial_num: Option<String>,
     ) -> Self {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let created_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock is before Unix epoch")
+            .as_secs();
         Self {
             recipient_digest,
             asset_faucet_id,
@@ -214,7 +227,7 @@ impl PaymentContext {
             note_tag,
             serial_num,
             expected_note_id: None,
-            created_at: std::time::Instant::now(),
+            created_at,
         }
     }
 
@@ -223,7 +236,12 @@ impl PaymentContext {
     /// Expired contexts should be discarded — the agent took too long
     /// to submit the transaction and send back the payment header.
     pub fn is_expired(&self, timeout_secs: u64) -> bool {
-        self.created_at.elapsed().as_secs() > timeout_secs
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock is before Unix epoch")
+            .as_secs();
+        now.saturating_sub(self.created_at) > timeout_secs
     }
 }
 
@@ -250,6 +268,38 @@ pub struct LightweightVerifyResponse {
     /// An error message if verification failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+/// Parses a hex-encoded serial number (32 bytes) into a Miden `Word` (`[Felt; 4]`).
+///
+/// Each of the four `Felt` values is constructed from 8 little-endian bytes.
+/// The input may optionally start with a `0x` prefix.
+///
+/// # Errors
+///
+/// Returns `Err` if the hex string is invalid or does not decode to exactly 32 bytes.
+#[cfg(feature = "miden-native")]
+pub fn parse_serial_num_hex(serial_num_hex: &str) -> Result<miden_protocol::Word, String> {
+    use miden_protocol::{Felt, Word};
+
+    let serial_bytes = hex::decode(serial_num_hex.strip_prefix("0x").unwrap_or(serial_num_hex))
+        .map_err(|e| format!("Invalid serial_num hex: {e}"))?;
+    if serial_bytes.len() != 32 {
+        return Err(format!(
+            "serial_num must be 32 bytes, got {}",
+            serial_bytes.len()
+        ));
+    }
+    Ok(Word::new([
+        Felt::new(u64::from_le_bytes(serial_bytes[0..8].try_into().unwrap())),
+        Felt::new(u64::from_le_bytes(serial_bytes[8..16].try_into().unwrap())),
+        Felt::new(u64::from_le_bytes(serial_bytes[16..24].try_into().unwrap())),
+        Felt::new(u64::from_le_bytes(serial_bytes[24..32].try_into().unwrap())),
+    ]))
 }
 
 // ---------------------------------------------------------------------------

@@ -28,9 +28,6 @@
 
 #[cfg(feature = "server")]
 pub mod server;
-#[cfg(feature = "server")]
-#[allow(unused_imports)]
-pub use server::*;
 
 pub mod types;
 pub use types::*;

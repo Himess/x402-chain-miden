@@ -4,9 +4,6 @@
 //! wire format for payment requirements and error handling.
 
 use serde::{Deserialize, Serialize};
-use x402_types::proto::v2;
-
-use crate::chain::MidenAccountAddress;
 
 /// String literal for the "exact" scheme name.
 #[derive(Debug, Clone, Copy)]
@@ -49,13 +46,6 @@ impl<'de> Deserialize<'de> for ExactScheme {
     }
 }
 
-/// Type alias for V2 payment requirements with Miden-specific types.
-///
-/// Uses `ExactScheme` for the scheme name, `String` for amount (u64 as string),
-/// `MidenAccountAddress` for addresses, and no extra data.
-pub type PaymentRequirements =
-    v2::PaymentRequirements<ExactScheme, String, MidenAccountAddress, Option<serde_json::Value>>;
-
 /// Errors specific to Miden payment processing.
 #[derive(Debug, thiserror::Error)]
 pub enum MidenExactError {
@@ -66,26 +56,6 @@ pub enum MidenExactError {
     /// The payment note was not found or does not match expectations.
     #[error("Payment not found in transaction outputs: {0}")]
     PaymentNotFound(String),
-
-    /// Chain ID mismatch between payload and requirements.
-    #[error("Chain ID mismatch: expected {expected}, got {got}")]
-    ChainIdMismatch { expected: String, got: String },
-
-    /// Recipient mismatch between payload and requirements.
-    #[error("Recipient mismatch: expected {expected}, got {got}")]
-    RecipientMismatch { expected: String, got: String },
-
-    /// Scheme mismatch between payload and requirements.
-    #[error("Scheme mismatch: expected {expected}, got {got}")]
-    SchemeMismatch { expected: String, got: String },
-
-    /// Asset/faucet mismatch between payload and requirements.
-    #[error("Asset mismatch: expected {expected}, got {got}")]
-    AssetMismatch { expected: String, got: String },
-
-    /// The payment amount is insufficient.
-    #[error("Insufficient payment: required {required}, got {got}")]
-    InsufficientPayment { required: String, got: String },
 
     /// The payment context or transaction has expired.
     #[error("Transaction expired at block {0}")]
@@ -109,21 +79,6 @@ pub enum MidenExactError {
     /// not verify against the block's note commitment root.
     #[error("Invalid inclusion proof: {0}")]
     InclusionProofInvalid(String),
-
-    /// The block header for the specified block number could not be fetched
-    /// from the Miden node, so the Merkle root is unavailable for verification.
-    #[error("Block header not found for block {0}")]
-    BlockHeaderNotFound(u32),
-
-    /// The payment context has expired — the agent took too long to submit
-    /// the transaction and send back the lightweight payment header.
-    #[error("Payment context expired")]
-    PaymentContextExpired,
-
-    /// No payment context was found for the given recipient digest.
-    /// The context may have already been consumed or was never created.
-    #[error("Payment context not found: {0}")]
-    PaymentContextNotFound(String),
 }
 
 impl From<MidenExactError> for x402_types::scheme::X402SchemeFacilitatorError {
