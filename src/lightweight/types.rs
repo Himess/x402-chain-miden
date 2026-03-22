@@ -39,7 +39,8 @@ use x402_types::chain::ChainId;
 ///   "amount": 1000000,
 ///   "noteTag": 12345,
 ///   "network": "miden:testnet",
-///   "serialNum": null
+///   "payTo": "0xaabbccddeeff...",
+///   "serialNum": "0x0102030405..."
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,11 +76,16 @@ pub struct LightweightPaymentRequirement {
     /// know the target account). This is the raw account ID, not the digest.
     pub pay_to: String,
 
-    /// Optional hex-encoded serial number (32 bytes).
+    /// Hex-encoded serial number (32 bytes).
     ///
-    /// When present the agent can use this to independently compute the
-    /// note's nullifier, enabling client-side tracking of note consumption.
-    /// Omitted by default for privacy.
+    /// The agent MUST use this serial_num when constructing the P2ID note
+    /// so that the note's recipient_digest matches what the server expects.
+    /// Without it, the agent would generate its own serial_num and the
+    /// server's NoteId verification would fail.
+    ///
+    /// Kept as `Option<String>` at the type level for backwards compatibility
+    /// (bobbinth's design allows omission for privacy), but in practice
+    /// `create_payment_requirement()` always populates this field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub serial_num: Option<String>,
 }
@@ -100,6 +106,8 @@ pub struct LightweightPaymentRequirement {
 /// {
 ///   "noteId": "0xdeadbeef...",
 ///   "blockNum": 42,
+///   "noteIndex": 5,
+///   "noteMetadata": "0xaabb...",
 ///   "inclusionProof": "0xcafebabe..."
 /// }
 /// ```
@@ -117,6 +125,23 @@ pub struct LightweightPaymentHeader {
     /// The server fetches the block header for this block number to verify
     /// the inclusion proof against the block's note commitment root.
     pub block_num: u32,
+
+    /// The note's index in the block's note tree (SparseMerkleTree).
+    ///
+    /// This is the `node_index_in_block` from the `NoteInclusionProof`
+    /// returned by the Miden node after the note is included in a block.
+    /// The index is computed as `batch_idx * MAX_OUTPUT_NOTES_PER_BATCH + note_idx_in_batch`.
+    /// Needed for `SparseMerklePath::verify()`.
+    pub note_index: u16,
+
+    /// The note metadata (hex-encoded serialized `NoteMetadata`).
+    ///
+    /// Contains the sender account ID, note type, note tag, and optional
+    /// attachment. The server uses this together with the `note_id` to
+    /// compute the note commitment (`hash(note_id || metadata_commitment)`)
+    /// which is the leaf value in the block's note tree. Required for
+    /// Merkle path verification.
+    pub note_metadata: String,
 
     /// The Merkle inclusion proof (hex-encoded `SparseMerklePath`).
     ///
@@ -292,16 +317,22 @@ mod tests {
             note_id: "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
                 .to_string(),
             block_num: 42,
+            note_index: 5,
+            note_metadata: "0xaabbccdd".to_string(),
             inclusion_proof: "0xcafebabe".to_string(),
         };
         let json = serde_json::to_string(&header).unwrap();
         assert!(json.contains("\"noteId\""));
         assert!(json.contains("\"blockNum\""));
+        assert!(json.contains("\"noteIndex\""));
+        assert!(json.contains("\"noteMetadata\""));
         assert!(json.contains("\"inclusionProof\""));
 
         let deserialized: LightweightPaymentHeader = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.note_id, header.note_id);
         assert_eq!(deserialized.block_num, header.block_num);
+        assert_eq!(deserialized.note_index, header.note_index);
+        assert_eq!(deserialized.note_metadata, header.note_metadata);
         assert_eq!(deserialized.inclusion_proof, header.inclusion_proof);
     }
 
@@ -390,15 +421,21 @@ mod tests {
         let header = LightweightPaymentHeader {
             note_id: "0xaa".to_string(),
             block_num: 1,
+            note_index: 0,
+            note_metadata: "0xcc".to_string(),
             inclusion_proof: "0xbb".to_string(),
         };
         let json = serde_json::to_string(&header).unwrap();
         // Verify camelCase keys (not snake_case)
         assert!(json.contains("\"noteId\""));
         assert!(json.contains("\"blockNum\""));
+        assert!(json.contains("\"noteIndex\""));
+        assert!(json.contains("\"noteMetadata\""));
         assert!(json.contains("\"inclusionProof\""));
         assert!(!json.contains("\"note_id\""));
         assert!(!json.contains("\"block_num\""));
+        assert!(!json.contains("\"note_index\""));
+        assert!(!json.contains("\"note_metadata\""));
         assert!(!json.contains("\"inclusion_proof\""));
     }
 }

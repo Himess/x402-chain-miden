@@ -96,7 +96,11 @@ pub fn create_payment_requirement(
         note_tag,
         network: network.clone(),
         pay_to: pay_to.to_string(),
-        serial_num: None, // Not shared with agent by default
+        // Always include serial_num so the agent can construct the note with
+        // the exact same serial number, producing a matching recipient_digest.
+        // Without this, the agent would generate its own serial_num and the
+        // server's verification would fail (NoteId mismatch).
+        serial_num: Some(serial_num_hex.clone()),
     };
 
     let context = PaymentContext::new(
@@ -119,33 +123,58 @@ fn generate_serial_num_hex() -> String {
     format!("0x{}", hex::encode(bytes))
 }
 
-/// Computes the recipient digest using real RPO hashing (miden-native).
+/// Computes the recipient digest using real RPO256 hashing (miden-native).
+///
+/// This uses `miden_standards::note::utils::build_p2id_recipient` which internally
+/// computes:
+///
+/// ```text
+/// serial_hash      = Rpo256::merge([serial_num, EMPTY_WORD])
+/// merge_script     = Rpo256::merge([serial_hash, P2ID_script_root])
+/// recipient_digest = Rpo256::merge([merge_script, inputs_commitment])
+/// ```
+///
+/// where `inputs_commitment = Rpo256::hash_elements([target.suffix(), target.prefix()])`.
 #[cfg(feature = "miden-native")]
 fn compute_recipient_digest(pay_to: &str, serial_num_hex: &str) -> String {
-    // TODO(bobbinth): Implement real RPO recipient_digest computation:
-    //   1. Parse pay_to as AccountId
-    //   2. Decode serial_num from hex
-    //   3. Compute serial_hash = Rpo256::hash(serial_num || EMPTY_WORD)
-    //   4. Get P2ID script_root from WellKnownNote::P2ID
-    //   5. Compute inputs_commitment from recipient AccountId
-    //   6. recipient_digest = Rpo256::merge([serial_hash, script_root, inputs_commitment, ZERO])
-    //
-    // For now, use a simplified placeholder that combines the inputs.
-    format!(
-        "0x{}",
-        hex::encode(&{
-            use std::collections::hash_map::DefaultHasher;
-            use std::hash::{Hash, Hasher};
-            let mut hasher = DefaultHasher::new();
-            pay_to.hash(&mut hasher);
-            serial_num_hex.hash(&mut hasher);
-            let h = hasher.finish();
-            let mut out = [0u8; 32];
-            out[..8].copy_from_slice(&h.to_le_bytes());
-            out[8..16].copy_from_slice(&h.to_be_bytes());
-            out
-        })
-    )
+    use miden_protocol::Felt;
+    use miden_protocol::Word;
+    use miden_protocol::account::AccountId;
+    use miden_standards::note::utils::build_p2id_recipient;
+
+    // Decode serial_num hex into raw bytes.
+    let serial_bytes = hex::decode(serial_num_hex.strip_prefix("0x").unwrap_or(serial_num_hex))
+        .expect("serial_num must be valid hex");
+    assert!(
+        serial_bytes.len() == 32,
+        "serial_num must be exactly 32 bytes"
+    );
+
+    // Convert 32 bytes into a Word (4 x Felt, each from 8 LE bytes).
+    // We use Felt::new() which accepts any u64 (internally uses non-canonical representation),
+    // so values >= field modulus are automatically reduced.
+    let serial_num = Word::new([
+        Felt::new(u64::from_le_bytes(serial_bytes[0..8].try_into().unwrap())),
+        Felt::new(u64::from_le_bytes(serial_bytes[8..16].try_into().unwrap())),
+        Felt::new(u64::from_le_bytes(serial_bytes[16..24].try_into().unwrap())),
+        Felt::new(u64::from_le_bytes(serial_bytes[24..32].try_into().unwrap())),
+    ]);
+
+    // Parse the target account ID from hex.
+    let target =
+        AccountId::from_hex(pay_to).expect("pay_to must be a valid Miden account ID hex string");
+
+    // Build the P2ID recipient using the miden-standards helper.
+    // This internally creates:
+    //   - NoteScript from WellKnownNote::P2ID
+    //   - NoteInputs from [target.suffix(), target.prefix().as_felt()]
+    //   - NoteRecipient which computes the digest via RPO256 hashing
+    let recipient =
+        build_p2id_recipient(target, serial_num).expect("Failed to build P2ID recipient");
+
+    // Return the digest as a 0x-prefixed hex string.
+    // Word::to_hex() already returns "0x"-prefixed hex with LE byte encoding.
+    recipient.digest().to_hex()
 }
 
 /// Non-cryptographic placeholder digest (no miden-native).
@@ -268,6 +297,8 @@ mod tests {
         LightweightPaymentHeader {
             note_id: "0xdeadbeefcafebabe1234567890abcdef".to_string(),
             block_num: 42,
+            note_index: 0,
+            note_metadata: "0xaabb".to_string(),
             inclusion_proof: "0xaabbccdd".to_string(),
         }
     }
@@ -291,6 +322,8 @@ mod tests {
         let header = LightweightPaymentHeader {
             note_id: String::new(),
             block_num: 42,
+            note_index: 0,
+            note_metadata: "0xaa".to_string(),
             inclusion_proof: "0xaabb".to_string(),
         };
         let result = verify_lightweight_payment_structural(&context, &header, 300);
@@ -303,6 +336,8 @@ mod tests {
         let header = LightweightPaymentHeader {
             note_id: "0xnote".to_string(),
             block_num: 42,
+            note_index: 0,
+            note_metadata: "0xaa".to_string(),
             inclusion_proof: String::new(),
         };
         let result = verify_lightweight_payment_structural(&context, &header, 300);
@@ -315,6 +350,8 @@ mod tests {
         let header = LightweightPaymentHeader {
             note_id: "0xnote".to_string(),
             block_num: 0,
+            note_index: 0,
+            note_metadata: "0xaa".to_string(),
             inclusion_proof: "0xproof".to_string(),
         };
         let result = verify_lightweight_payment_structural(&context, &header, 300);

@@ -30,11 +30,11 @@
 //!
 //! # Design Details (bobbinth)
 //!
-//! - The server sends `{recipient_digest, asset, note_tag}` in the 402
-//!   response. The `recipient_digest` is computed server-side from a
-//!   random `serial_num`, the P2ID script root, and the recipient's
-//!   account ID. The `serial_num` itself is **not** sent to the agent
-//!   (unless explicitly opted in for nullifier tracking).
+//! - The server sends `{recipient_digest, asset, note_tag, serial_num}` in
+//!   the 402 response. The `recipient_digest` is computed server-side from
+//!   a random `serial_num`, the P2ID script root, and the recipient's
+//!   account ID. The `serial_num` is included so the agent can construct
+//!   a note with the same recipient_digest (required for NoteId matching).
 //!
 //! - The agent creates a P2ID note matching the `recipient_digest` and
 //!   `asset`, proves the transaction locally, submits it to the network,

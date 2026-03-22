@@ -18,8 +18,10 @@
 //! ┌──────────────────────┐        ┌──────────────────────┐
 //! │ recipient_digest     │        │ note_id              │
 //! │ asset_faucet_id      │        │ block_num            │
-//! │ amount               │        │ inclusion_proof      │
-//! └──────────────────────┘        └──────────────────────┘
+//! │ amount               │        │ note_index           │
+//! └──────────────────────┘        │ note_metadata        │
+//!                                 │ inclusion_proof      │
+//!                                 └──────────────────────┘
 //!           │                                │
 //!           ▼                                ▼
 //!  ┌─────────────────────────────────────────────────┐
@@ -74,11 +76,12 @@ pub async fn verify_lightweight_payment(
     payment_header: &LightweightPaymentHeader,
     chain_state: &FacilitatorChainState,
 ) -> Result<LightweightVerifyResponse, MidenExactError> {
+    use miden_protocol::Word;
     use miden_protocol::account::AccountId;
     use miden_protocol::asset::FungibleAsset;
     use miden_protocol::crypto::hash::RpoDigest;
     use miden_protocol::crypto::merkle::SparseMerklePath;
-    use miden_protocol::note::NoteId;
+    use miden_protocol::note::{NoteId, NoteMetadata, compute_note_commitment};
     use miden_protocol::utils::serde::Deserializable;
 
     // ------------------------------------------------------------------
@@ -175,41 +178,71 @@ pub async fn verify_lightweight_payment(
         MidenExactError::DeserializationError(format!("Invalid hex in inclusion_proof: {e}"))
     })?;
 
-    let _merkle_path = SparseMerklePath::read_from_bytes(&proof_bytes).map_err(|e| {
+    let merkle_path = SparseMerklePath::read_from_bytes(&proof_bytes).map_err(|e| {
         MidenExactError::DeserializationError(format!(
             "Failed to deserialize SparseMerklePath: {e}"
         ))
     })?;
 
-    // Parse the block's note_root for Merkle verification
-    let note_root_hex = cached_header
-        .note_root
-        .strip_prefix("0x")
-        .unwrap_or(&cached_header.note_root);
-
-    let _note_root_bytes = hex::decode(note_root_hex).map_err(|e| {
-        MidenExactError::DeserializationError(format!("Invalid hex in cached note_root: {e}"))
+    // Parse the block's note_root as a Word for Merkle verification.
+    // The note_root is stored as a hex string produced by Word::to_hex()
+    // (which includes the "0x" prefix).
+    let expected_root = Word::try_from(cached_header.note_root.as_str()).map_err(|e| {
+        MidenExactError::DeserializationError(format!(
+            "Failed to parse cached note_root as Word: {e}"
+        ))
     })?;
 
-    // NOTE: Full SparseMerklePath::verify() call requires:
-    //   merkle_path.verify(node_index, note_commitment, expected_root)
-    //
-    // The exact API depends on the miden-protocol version. The node_index
-    // is either provided in the payment_header.note_index or derived from
-    // the NoteId. The note_commitment is the hash of the note metadata.
-    //
-    // For now, we verify the path deserializes correctly and the note_root
-    // is parseable. Full Merkle verification will be enabled once the
-    // SparseMerklePath::verify() API is finalized in miden-protocol 0.13+.
-    //
-    // TODO(bobbinth): Wire up SparseMerklePath::verify() once the exact
-    // node index derivation is specified. See 0xMiden/node#1796.
+    // Parse the agent's NoteId from hex so we can compute the note commitment.
+    let agent_note_id = NoteId::try_from_hex(&payment_header.note_id).map_err(|e| {
+        MidenExactError::DeserializationError(format!(
+            "Failed to parse agent note_id '{}' as NoteId: {e}",
+            payment_header.note_id
+        ))
+    })?;
+
+    // Parse the note metadata from the agent's hex-encoded serialized NoteMetadata.
+    // The note metadata is needed to compute the note commitment:
+    //   note_commitment = hash(note_id || metadata_commitment)
+    let metadata_hex = payment_header
+        .note_metadata
+        .strip_prefix("0x")
+        .unwrap_or(&payment_header.note_metadata);
+
+    let metadata_bytes = hex::decode(metadata_hex).map_err(|e| {
+        MidenExactError::DeserializationError(format!("Invalid hex in note_metadata: {e}"))
+    })?;
+
+    let note_metadata = NoteMetadata::read_from_bytes(&metadata_bytes).map_err(|e| {
+        MidenExactError::DeserializationError(format!("Failed to deserialize NoteMetadata: {e}"))
+    })?;
+
+    // Compute the note commitment, which is the leaf value stored in the
+    // block's note tree at the position `note_index`.
+    //   note_commitment = hash(note_id_word || metadata_commitment)
+    let note_commitment = compute_note_commitment(agent_note_id, &note_metadata);
+
+    // Verify the SparseMerklePath: check that hashing up from the leaf
+    // (note_commitment at index note_index) produces the expected note_root.
+    merkle_path
+        .verify(
+            payment_header.note_index as u64,
+            note_commitment,
+            &expected_root,
+        )
+        .map_err(|e| {
+            MidenExactError::InclusionProofInvalid(format!(
+                "SparseMerklePath verification failed for note_index={}: {e}",
+                payment_header.note_index
+            ))
+        })?;
 
     #[cfg(feature = "tracing")]
     tracing::info!(
         note_id = %payment_header.note_id,
         block_num = %payment_header.block_num,
-        "Lightweight payment verification passed: NoteId matches, inclusion proof parsed"
+        note_index = %payment_header.note_index,
+        "Lightweight payment verification passed: NoteId matches, Merkle inclusion verified"
     );
 
     // ------------------------------------------------------------------
@@ -333,6 +366,8 @@ mod tests {
         let header = LightweightPaymentHeader {
             note_id: "0xdeadbeef".to_string(),
             block_num: 10,
+            note_index: 0,
+            note_metadata: "0xaabb".to_string(),
             inclusion_proof: "0xcafe".to_string(),
         };
         let chain_state = FacilitatorChainState::new(

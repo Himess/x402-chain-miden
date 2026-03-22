@@ -146,122 +146,129 @@ impl LightweightPayerLike for LightweightMidenPayer {
         &self,
         requirement: &LightweightPaymentRequirement,
     ) -> Result<LightweightPaymentHeader, x402_types::scheme::client::X402Error> {
+        use miden_client::note::build_p2id_recipient;
         use miden_protocol::account::AccountId;
         use miden_protocol::asset::{Asset, FungibleAsset};
-        use miden_protocol::note::NoteType;
+        use miden_protocol::note::{Note, NoteAssets, NoteMetadata, NoteTag, NoteType};
+        use miden_protocol::transaction::OutputNote;
         use miden_protocol::utils::serde::Serializable;
+        use miden_protocol::{Felt, Word};
         use x402_types::scheme::client::X402Error;
 
-        // 1. Parse sender account ID
+        // 1. Parse account IDs
         let sender = AccountId::from_hex(&self.account_id_hex)
             .map_err(|e| X402Error::SigningError(format!("Invalid sender account ID: {e}")))?;
-
-        // 2. Parse faucet account ID
-        let faucet = AccountId::from_hex(&requirement.asset)
-            .map_err(|e| X402Error::SigningError(format!("Invalid faucet account ID: {e}")))?;
-
-        // 3. Resolve the target account ID from `pay_to` field
         let target = AccountId::from_hex(&requirement.pay_to).map_err(|e| {
             X402Error::SigningError(format!("Invalid target account ID (pay_to): {e}"))
         })?;
+        let faucet = AccountId::from_hex(&requirement.asset)
+            .map_err(|e| X402Error::SigningError(format!("Invalid faucet account ID: {e}")))?;
 
-        // 4. Create fungible asset
+        // 2. Parse server's serial_num from hex into Word ([Felt; 4])
+        let serial_num_hex = requirement.serial_num.as_deref().ok_or_else(|| {
+            X402Error::SigningError(
+                "serial_num is required in LightweightPaymentRequirement for note construction"
+                    .into(),
+            )
+        })?;
+        let serial_bytes = hex::decode(serial_num_hex.strip_prefix("0x").unwrap_or(serial_num_hex))
+            .map_err(|e| X402Error::SigningError(format!("Invalid serial_num hex: {e}")))?;
+        if serial_bytes.len() != 32 {
+            return Err(X402Error::SigningError(format!(
+                "serial_num must be 32 bytes, got {}",
+                serial_bytes.len()
+            )));
+        }
+        // Convert 32 bytes into Word = [Felt; 4], each Felt from 8 bytes LE
+        let serial_num: Word = [
+            Felt::new(u64::from_le_bytes(serial_bytes[0..8].try_into().unwrap())),
+            Felt::new(u64::from_le_bytes(serial_bytes[8..16].try_into().unwrap())),
+            Felt::new(u64::from_le_bytes(serial_bytes[16..24].try_into().unwrap())),
+            Felt::new(u64::from_le_bytes(serial_bytes[24..32].try_into().unwrap())),
+        ];
+
+        // 3. Build P2ID NoteRecipient with the server's serial_num
+        //    This ensures the note's recipient_digest matches what the server expects.
+        let recipient = build_p2id_recipient(target, serial_num)
+            .map_err(|e| X402Error::SigningError(format!("Failed to build P2ID recipient: {e}")))?;
+
+        // 4. Build the Note manually with the custom recipient
         let asset = FungibleAsset::new(faucet, requirement.amount)
             .map_err(|e| X402Error::SigningError(format!("Failed to create FungibleAsset: {e}")))?;
+        let vault = NoteAssets::new(vec![Asset::Fungible(asset)])
+            .map_err(|e| X402Error::SigningError(format!("Invalid note assets: {e}")))?;
 
-        // 5. Build P2ID note as private (NoteType::Private) — the note content
-        //    does not need to be public since the server verifies via inclusion proof
-        let mut client_guard = self.client.lock().await;
+        let tag = NoteTag::new(requirement.note_tag);
+        let metadata = NoteMetadata::new(sender, NoteType::Private, tag);
 
-        let payment_data = miden_client::transaction::PaymentNoteDescription::new(
-            vec![Asset::Fungible(asset)],
-            sender,
-            target,
-        );
+        let note = Note::new(vault, metadata, recipient);
+        let note_id_str = format!("{}", note.id());
 
+        // 5. Build transaction request with our custom note (bypassing build_pay_to_id
+        //    which would generate its own serial_num)
         let tx_request = miden_client::transaction::TransactionRequestBuilder::new()
-            .build_pay_to_id(payment_data, NoteType::Private, client_guard.rng())
+            .own_output_notes(vec![OutputNote::Full(note)])
+            .build()
             .map_err(|e| {
-                X402Error::SigningError(format!("Failed to build P2ID TransactionRequest: {e}"))
+                X402Error::SigningError(format!("Failed to build TransactionRequest: {e}"))
             })?;
 
-        // 6. Execute transaction locally in the Miden VM
-        let tx_result = client_guard
-            .execute_transaction(sender, tx_request)
-            .await
-            .map_err(|e| X402Error::SigningError(format!("Transaction execution failed: {e}")))?;
-
-        // 7. Extract note ID from the created output notes
-        let note_id = tx_result
-            .created_notes()
-            .iter()
-            .next()
-            .map(|n| format!("{}", n.id()))
-            .ok_or_else(|| {
-                X402Error::SigningError("Transaction produced no output notes".to_string())
-            })?;
-
-        // 8. Generate STARK proof
-        //    Grab the prover from the client, release the lock, then prove.
-        let prover = client_guard.prover();
-        drop(client_guard);
-
-        let proven_tx = prover
-            .prove(tx_result.into())
-            .await
-            .map_err(|e| X402Error::SigningError(format!("Transaction proving failed: {e}")))?;
-
-        // 9. Submit the proven transaction directly to the Miden network.
-        //    Re-acquire the lock to use the client's submission mechanism.
-        //    The client internally serializes and sends via gRPC.
-        let _proven_tx_bytes = proven_tx.to_bytes();
-        let _tx_id = format!("{}", proven_tx.id());
-
-        // TODO(bobbinth): Use miden-client's submit + sync APIs once the
-        // exact method signatures stabilize. The current miden-client 0.13
-        // API is:
-        //   client.submit_transaction(proven_tx) -> Result<()>
-        //   client.sync_state() -> Result<SyncSummary>
-        //
-        // After submission and sync, the note inclusion proof can be
-        // extracted from the client's store:
-        //   client.get_note_inclusion_proof(note_id) -> Option<NoteInclusionProof>
-        //
-        // The NoteInclusionProof contains the block_num and SparseMerklePath.
-
-        // 10. Sync state to find the note in a block.
-        //     After sync, the client's local store should have the note
-        //     inclusion proof if the note was committed to a block.
+        // 6. Execute, prove, submit, and apply the transaction in one call.
+        //    submit_new_transaction handles the full lifecycle:
+        //      execute_transaction -> prove_transaction -> submit_proven_transaction -> apply_transaction
         let mut client_guard = self.client.lock().await;
+        client_guard
+            .submit_new_transaction(sender, tx_request)
+            .await
+            .map_err(|e| X402Error::SigningError(format!("Transaction submission failed: {e}")))?;
 
+        // 7. Sync state to get the note inclusion proof from the network.
+        //    After the transaction is committed to a block, sync_state will
+        //    update the local store with inclusion proofs for output notes.
         client_guard
             .sync_state()
             .await
             .map_err(|e| X402Error::SigningError(format!("State sync failed: {e}")))?;
 
-        // 11. Extract inclusion proof from the client's store.
-        //     The miden-client tracks output notes and their inclusion
-        //     proofs after sync. The exact API depends on the client version.
-        //
-        //     For now, we return a placeholder. A production implementation
-        //     would query the client's note store:
-        //
-        //       let proof = client_guard.get_output_note_inclusion_proof(&note_id_parsed)?;
-        //       let block_num = proof.block_num();
-        //       let merkle_path = hex::encode(proof.path().to_bytes());
+        // 8. Extract the inclusion proof from the client's output note store.
+        //    After sync, committed notes have inclusion proofs attached.
+        let output_notes = client_guard
+            .get_output_notes(miden_client::store::NoteFilter::Committed)
+            .await
+            .map_err(|e| X402Error::SigningError(format!("Failed to query output notes: {e}")))?;
 
-        // Release the lock
+        let our_note = output_notes
+            .iter()
+            .find(|n| format!("{}", n.id()) == note_id_str)
+            .ok_or_else(|| {
+                X402Error::SigningError(
+                    "Note not found in client store after sync — \
+                     the transaction may not yet be committed to a block"
+                        .into(),
+                )
+            })?;
+
+        let inclusion_proof = our_note.inclusion_proof().ok_or_else(|| {
+            X402Error::SigningError(
+                "Note has no inclusion proof yet — may need additional sync cycles".into(),
+            )
+        })?;
+
+        let block_num = inclusion_proof.location().block_num().as_u32();
+        let note_index = inclusion_proof.location().node_index_in_block();
+        let path_bytes = inclusion_proof.note_path().to_bytes();
+        let path_hex = format!("0x{}", hex::encode(&path_bytes));
+        let metadata_bytes = metadata.to_bytes();
+        let metadata_hex = format!("0x{}", hex::encode(&metadata_bytes));
+
         drop(client_guard);
 
-        // TODO: Replace with real inclusion proof extraction once
-        // miden-client 0.13+ stabilizes the note tracking API.
-        //
-        // The return value below is a placeholder that will be replaced
-        // when integrating with the actual miden-client note store.
         Ok(LightweightPaymentHeader {
-            note_id,
-            block_num: 0,
-            inclusion_proof: String::new(),
+            note_id: note_id_str,
+            block_num,
+            note_index,
+            note_metadata: metadata_hex,
+            inclusion_proof: path_hex,
         })
     }
 }
@@ -271,7 +278,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_requirement_with_pay_to() {
+    fn test_requirement_with_pay_to_and_serial_num() {
+        // In production, serial_num is always provided by the server so the
+        // agent can construct the note with the matching recipient_digest.
+        let req = LightweightPaymentRequirement {
+            recipient_digest: "0xdigest".to_string(),
+            asset: "0x37d5977a8e16d8205a360820f0230f".to_string(),
+            amount: 1_000_000,
+            note_tag: 42,
+            network: x402_types::chain::ChainId::new("miden", "testnet"),
+            pay_to: "0xaabbccddeeff00112233aabbccddee".to_string(),
+            serial_num: Some(
+                "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20".to_string(),
+            ),
+        };
+        assert!(req.serial_num.is_some());
+        assert_eq!(req.serial_num.as_deref().unwrap().len(), 66); // "0x" + 64 hex chars
+    }
+
+    #[test]
+    fn test_requirement_serial_num_optional_at_type_level() {
+        // The type keeps serial_num as Option<String> for backwards compatibility
+        // (bobbinth's design says it's optional for privacy), but in practice
+        // create_payment_requirement() always populates it.
         let req = LightweightPaymentRequirement {
             recipient_digest: "0xdigest".to_string(),
             asset: "0x37d5977a8e16d8205a360820f0230f".to_string(),
@@ -281,8 +310,6 @@ mod tests {
             pay_to: "0xaabbccddeeff00112233aabbccddee".to_string(),
             serial_num: None,
         };
-        // pay_to is a required field in LightweightPaymentRequirement.
-        // The agent needs it to know where to send the P2ID note.
         assert!(req.serial_num.is_none());
     }
 }
