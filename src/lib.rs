@@ -47,6 +47,7 @@
 //! ```
 
 pub mod chain;
+pub mod lightweight;
 pub mod privacy;
 pub mod v2_miden_exact;
 
@@ -60,3 +61,6 @@ pub use v2_miden_exact::client::V2MidenExactClient;
 
 #[cfg(all(feature = "client", feature = "miden-client-native"))]
 pub use v2_miden_exact::client::MidenClientSigner;
+
+#[cfg(all(feature = "client", feature = "miden-client-native"))]
+pub use lightweight::client::LightweightMidenPayer;

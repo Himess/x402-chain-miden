@@ -154,6 +154,33 @@ pub enum MidenExactError {
     /// An error from the Miden provider.
     #[error("Provider error: {0}")]
     ProviderError(String),
+
+    // --- Lightweight verification errors (bobbinth's design, 0xMiden/node#1796) ---
+
+    /// The note ID does not match the expected value computed from
+    /// `hash(recipient_digest, asset_commitment)`.
+    #[error("NoteId mismatch: expected {expected}, got {got}")]
+    NoteIdMismatch { expected: String, got: String },
+
+    /// The Merkle inclusion proof (SparseMerklePath) is invalid or does
+    /// not verify against the block's note commitment root.
+    #[error("Invalid inclusion proof: {0}")]
+    InclusionProofInvalid(String),
+
+    /// The block header for the specified block number could not be fetched
+    /// from the Miden node, so the Merkle root is unavailable for verification.
+    #[error("Block header not found for block {0}")]
+    BlockHeaderNotFound(u32),
+
+    /// The payment context has expired — the agent took too long to submit
+    /// the transaction and send back the lightweight payment header.
+    #[error("Payment context expired")]
+    PaymentContextExpired,
+
+    /// No payment context was found for the given recipient digest.
+    /// The context may have already been consumed or was never created.
+    #[error("Payment context not found: {0}")]
+    PaymentContextNotFound(String),
 }
 
 impl From<MidenExactError> for x402_types::scheme::X402SchemeFacilitatorError {
