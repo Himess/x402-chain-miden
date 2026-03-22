@@ -1,14 +1,35 @@
 name: CI
 on: [push, pull_request]
 jobs:
-  test:
+  check-and-lint:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        features: ["", "client", "server", "facilitator", "full"]
+        features: ["", "server", "client", "facilitator", "server,client,facilitator"]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo check --features "${{ matrix.features }}"
-      - run: cargo test --features "${{ matrix.features }}"
       - run: cargo clippy --features "${{ matrix.features }}" -- -D warnings
+      - run: cargo fmt --check
+
+  test-default:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test
+
+  test-native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --features miden-native
+
+  test-full:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --features "server,client,facilitator,miden-native"
