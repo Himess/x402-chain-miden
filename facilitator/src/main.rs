@@ -22,6 +22,7 @@
 //! - `MIDEN_RPC_URL`   - Miden node RPC URL (default: https://rpc.testnet.miden.io)
 //! - `MIDEN_NETWORK`   - Network: "testnet" or "mainnet" (default: testnet)
 
+use axum::error_handling::HandleErrorLayer;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
@@ -29,10 +30,9 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use std::collections::HashMap;
 use std::env;
-use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
-use axum::error_handling::HandleErrorLayer;
 use tower::ServiceBuilder;
 use tower::buffer::BufferLayer;
 use tower::limit::RateLimitLayer;
@@ -41,8 +41,9 @@ use tower_http::trace::TraceLayer;
 use x402_chain_miden::chain::{MidenChainConfig, MidenChainProvider, MidenChainReference};
 use x402_chain_miden::lightweight::{
     FacilitatorChainState, PaymentContext,
-    server::{create_payment_requirement, verify_lightweight_payment, DEFAULT_CONTEXT_TIMEOUT_SECS},
+    server::{DEFAULT_CONTEXT_TIMEOUT_SECS, create_payment_requirement},
     types::LightweightPaymentHeader,
+    verify_lightweight_payment_full,
 };
 use x402_types::chain::{ChainId, ChainProviderOps};
 
@@ -103,8 +104,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rpc_url =
         env::var("MIDEN_RPC_URL").unwrap_or_else(|_| "https://rpc.testnet.miden.io".to_string());
     let network = env::var("MIDEN_NETWORK").unwrap_or_else(|_| "testnet".to_string());
-    let faucet_id = env::var("FAUCET_ID")
-        .unwrap_or_else(|_| "0x37d5977a8e16d8205a360820f0230f".to_string());
+    let faucet_id =
+        env::var("FAUCET_ID").unwrap_or_else(|_| "0x37d5977a8e16d8205a360820f0230f".to_string());
 
     // Build Miden provider
     let chain_reference = MidenChainReference::try_from(network.as_str())
@@ -125,10 +126,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let chain_id = provider.chain_id();
 
     // Build chain state for lightweight verification (block header cache)
-    let chain_state = FacilitatorChainState::new(
-        config.rpc_url.clone(),
-        config.chain_reference.clone(),
-    );
+    let chain_state =
+        FacilitatorChainState::new(config.rpc_url.clone(), config.chain_reference.clone());
 
     // Start background sync for block header caching
     let chain_state_bg = chain_state.clone();
@@ -220,30 +219,32 @@ async fn root_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
 async fn health_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let cached_headers = state.chain_state.cached_count();
-    let pending_contexts = state
-        .payment_contexts
-        .read()
-        .map(|c| c.len())
-        .unwrap_or(0);
+    let pending_contexts = state.payment_contexts.read().map(|c| c.len()).unwrap_or(0);
 
-    (StatusCode::OK, Json(serde_json::json!({
-        "status": "ok",
-        "chain_id": state.chain_id.to_string(),
-        "faucetId": state.faucet_id,
-        "cached_block_headers": cached_headers,
-        "pending_payment_contexts": pending_contexts,
-    })))
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "status": "ok",
+            "chain_id": state.chain_id.to_string(),
+            "faucetId": state.faucet_id,
+            "cached_block_headers": cached_headers,
+            "pending_payment_contexts": pending_contexts,
+        })),
+    )
 }
 
 async fn supported_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    (StatusCode::OK, Json(serde_json::json!({
-        "kinds": [{
-            "x402Version": 2,
-            "scheme": "exact",
-            "network": state.chain_id.to_string(),
-        }],
-        "verification": "lightweight",
-    })))
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "kinds": [{
+                "x402Version": 2,
+                "scheme": "exact",
+                "network": state.chain_id.to_string(),
+            }],
+            "verification": "lightweight",
+        })),
+    )
 }
 
 /// Returns Prometheus-format metrics as plain text.
@@ -260,11 +261,7 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> impl IntoRespons
         .metrics
         .payment_requirement_requests_total
         .load(Ordering::Relaxed);
-    let pending_contexts = state
-        .payment_contexts
-        .read()
-        .map(|c| c.len())
-        .unwrap_or(0);
+    let pending_contexts = state.payment_contexts.read().map(|c| c.len()).unwrap_or(0);
     let cached_headers = state.chain_state.cached_count();
 
     let body = format!(
@@ -340,15 +337,13 @@ async fn payment_requirement_handler(
         state.chain_id.clone(),
     );
 
-    // Generate a unique context ID
-    let context_id = format!(
-        "ctx-{}-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos(),
-        &body.recipient[..std::cmp::min(8, body.recipient.len())]
-    );
+    // Generate a unique context ID using cryptographically secure random bytes
+    let context_id = {
+        let mut id_bytes = [0u8; 16];
+        getrandom::getrandom(&mut id_bytes)
+            .expect("Failed to generate random bytes for context ID");
+        format!("ctx-{}", hex::encode(id_bytes))
+    };
 
     // Store the context
     match state.payment_contexts.write() {
@@ -458,12 +453,25 @@ async fn verify_lightweight_handler(
         }
     };
 
-    // 2. Verify the lightweight payment
-    let result = verify_lightweight_payment(
-        &context,
-        &body.payment_header,
-        DEFAULT_CONTEXT_TIMEOUT_SECS,
-    );
+    // 2. Check expiry before performing full verification
+    if context.is_expired(DEFAULT_CONTEXT_TIMEOUT_SECS) {
+        state
+            .metrics
+            .lightweight_verify_errors_total
+            .fetch_add(1, Ordering::Relaxed);
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({
+                "error": "context_expired",
+                "message": "Payment context has expired",
+            })),
+        );
+    }
+
+    // 3. Verify the lightweight payment using full crypto verification
+    //    (NoteId reconstruction + SparseMerklePath + FacilitatorChainState)
+    let result =
+        verify_lightweight_payment_full(&context, &body.payment_header, &state.chain_state).await;
 
     match result {
         Ok(response) => {

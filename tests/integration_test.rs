@@ -3,9 +3,7 @@
 //! These tests verify core types, price tag creation, and the lightweight
 //! payment verification design.
 
-use x402_chain_miden::chain::{
-    MidenAccountAddress, MidenChainReference, MidenTokenDeployment,
-};
+use x402_chain_miden::chain::{MidenAccountAddress, MidenChainReference, MidenTokenDeployment};
 use x402_chain_miden::{KnownNetworkMiden, MidenUSDC, V2MidenExact};
 use x402_types::chain::ChainId;
 use x402_types::scheme::X402SchemeId;
@@ -274,7 +272,10 @@ mod address_tests {
     #[test]
     fn test_miden_address_from_bytes() {
         // Valid 15-byte address
-        let bytes = vec![0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b];
+        let bytes = vec![
+            0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
+            0x0b,
+        ];
         let addr = MidenAccountAddress::from_bytes(&bytes).unwrap();
         let hex_str = addr.to_string();
         assert_eq!(hex_str, "0xdeadbeef0102030405060708090a0b");

@@ -100,7 +100,6 @@ pub enum MidenExactError {
     ProviderError(String),
 
     // --- Lightweight verification errors (bobbinth's design, 0xMiden/node#1796) ---
-
     /// The note ID does not match the expected value computed from
     /// `hash(recipient_digest, asset_commitment)`.
     #[error("NoteId mismatch: expected {expected}, got {got}")]
@@ -132,14 +131,14 @@ impl From<MidenExactError> for x402_types::scheme::X402SchemeFacilitatorError {
         match value {
             MidenExactError::NoteIdMismatch { expected, got } => {
                 x402_types::scheme::X402SchemeFacilitatorError::PaymentVerification(
-                    x402_types::proto::PaymentVerificationError::InvalidFormat(
-                        format!("NoteId mismatch: expected {expected}, got {got}"),
-                    ),
+                    x402_types::proto::PaymentVerificationError::InvalidFormat(format!(
+                        "NoteId mismatch: expected {expected}, got {got}"
+                    )),
                 )
             }
-            other => x402_types::scheme::X402SchemeFacilitatorError::OnchainFailure(
-                other.to_string(),
-            ),
+            other => {
+                x402_types::scheme::X402SchemeFacilitatorError::OnchainFailure(other.to_string())
+            }
         }
     }
 }

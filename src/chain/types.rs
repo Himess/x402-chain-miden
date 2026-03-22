@@ -43,10 +43,12 @@ impl MidenAccountAddress {
     /// Returns an error if the input is not exactly 15 bytes.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, MidenAddressParseError> {
         let arr: [u8; MIDEN_ACCOUNT_ID_BYTE_LEN] =
-            bytes.try_into().map_err(|_| MidenAddressParseError::InvalidLength {
-                expected: MIDEN_ACCOUNT_ID_BYTE_LEN,
-                got: bytes.len(),
-            })?;
+            bytes
+                .try_into()
+                .map_err(|_| MidenAddressParseError::InvalidLength {
+                    expected: MIDEN_ACCOUNT_ID_BYTE_LEN,
+                    got: bytes.len(),
+                })?;
         Ok(Self(arr))
     }
 
@@ -69,10 +71,12 @@ impl FromStr for MidenAccountAddress {
         let bytes =
             hex::decode(s).map_err(|e| MidenAddressParseError::InvalidHex(e.to_string()))?;
         let arr: [u8; MIDEN_ACCOUNT_ID_BYTE_LEN] =
-            bytes.try_into().map_err(|v: Vec<u8>| MidenAddressParseError::InvalidLength {
-                expected: MIDEN_ACCOUNT_ID_BYTE_LEN,
-                got: v.len(),
-            })?;
+            bytes
+                .try_into()
+                .map_err(|v: Vec<u8>| MidenAddressParseError::InvalidLength {
+                    expected: MIDEN_ACCOUNT_ID_BYTE_LEN,
+                    got: v.len(),
+                })?;
         Ok(Self(arr))
     }
 }
@@ -110,7 +114,9 @@ impl MidenAccountAddress {
     /// Converts this address to a miden-protocol `AccountId`.
     ///
     /// Parses the hex-encoded account ID using `AccountId::from_hex`.
-    pub fn to_account_id(&self) -> Result<miden_protocol::account::AccountId, MidenAddressParseError> {
+    pub fn to_account_id(
+        &self,
+    ) -> Result<miden_protocol::account::AccountId, MidenAddressParseError> {
         let hex_str = self.to_hex();
         miden_protocol::account::AccountId::from_hex(&hex_str)
             .map_err(|e| MidenAddressParseError::InvalidAccountId(e.to_string()))
@@ -120,7 +126,9 @@ impl MidenAccountAddress {
     pub fn from_account_id(id: miden_protocol::account::AccountId) -> Self {
         let hex_str = id.to_hex();
         // to_hex returns "0x..." prefixed string
-        hex_str.parse().expect("AccountId::to_hex always produces valid hex")
+        hex_str
+            .parse()
+            .expect("AccountId::to_hex always produces valid hex")
     }
 }
 
@@ -409,7 +417,11 @@ mod tests {
         // Too short (3 bytes)
         assert!("abcdef".parse::<MidenAccountAddress>().is_err());
         // Too long (16 bytes)
-        assert!("abcdef1234567890abcdef1234567890".parse::<MidenAccountAddress>().is_err());
+        assert!(
+            "abcdef1234567890abcdef1234567890"
+                .parse::<MidenAccountAddress>()
+                .is_err()
+        );
     }
 
     #[test]

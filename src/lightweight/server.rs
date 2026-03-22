@@ -46,10 +46,9 @@
 //! - With `miden-native`: real RPO hashing and full verification using
 //!   `miden-protocol` types.
 
-use super::types::{
-    LightweightPaymentHeader, LightweightPaymentRequirement,
-    LightweightVerifyResponse, PaymentContext,
-};
+#[cfg(test)]
+use super::types::{LightweightPaymentHeader, LightweightVerifyResponse};
+use super::types::{LightweightPaymentRequirement, PaymentContext};
 
 /// Creates a lightweight payment requirement and server-side payment context.
 ///
@@ -96,7 +95,7 @@ pub fn create_payment_requirement(
         amount,
         note_tag,
         network: network.clone(),
-        pay_to: Some(pay_to.to_string()),
+        pay_to: pay_to.to_string(),
         serial_num: None, // Not shared with agent by default
     };
 
@@ -112,20 +111,11 @@ pub fn create_payment_requirement(
 }
 
 /// Generates a hex-encoded random serial number (32 bytes).
+///
+/// Uses the `getrandom` crate to obtain cryptographically secure random bytes.
 fn generate_serial_num_hex() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    // Simple entropy source — in production, use `rand::thread_rng()`.
-    // We avoid adding `rand` as a non-dev dependency.
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
     let mut bytes = [0u8; 32];
-    let nanos_bytes = nanos.to_le_bytes();
-    bytes[..16].copy_from_slice(&nanos_bytes);
-    // Mix in some additional entropy from the stack pointer
-    let stack_val = &bytes as *const _ as usize;
-    bytes[16..24].copy_from_slice(&stack_val.to_le_bytes());
+    getrandom::getrandom(&mut bytes).expect("Failed to generate random bytes");
     format!("0x{}", hex::encode(bytes))
 }
 
@@ -143,20 +133,18 @@ fn compute_recipient_digest(pay_to: &str, serial_num_hex: &str) -> String {
     // For now, use a simplified placeholder that combines the inputs.
     format!(
         "0x{}",
-        hex::encode(
-            &{
-                use std::collections::hash_map::DefaultHasher;
-                use std::hash::{Hash, Hasher};
-                let mut hasher = DefaultHasher::new();
-                pay_to.hash(&mut hasher);
-                serial_num_hex.hash(&mut hasher);
-                let h = hasher.finish();
-                let mut out = [0u8; 32];
-                out[..8].copy_from_slice(&h.to_le_bytes());
-                out[8..16].copy_from_slice(&h.to_be_bytes());
-                out
-            }
-        )
+        hex::encode(&{
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            pay_to.hash(&mut hasher);
+            serial_num_hex.hash(&mut hasher);
+            let h = hasher.finish();
+            let mut out = [0u8; 32];
+            out[..8].copy_from_slice(&h.to_le_bytes());
+            out[8..16].copy_from_slice(&h.to_be_bytes());
+            out
+        })
     )
 }
 
@@ -213,70 +201,28 @@ pub enum LightweightVerifyError {
 /// after receiving the 402 response, the context is considered expired.
 pub const DEFAULT_CONTEXT_TIMEOUT_SECS: u64 = 300;
 
-/// Verifies a lightweight payment header against a payment context.
-///
-/// This is the main entry point for server-side lightweight verification.
-///
-/// # Steps (per bobbinth's design)
-///
-/// 1. Check that the payment context has not expired.
-/// 2. Verify the `note_id` matches the expected value computed from the
-///    payment context's `recipient_digest` and `asset`.
-/// 3. Verify the Merkle inclusion proof against the block's note tree root.
-///
-/// # Feature gating
-///
-/// With `miden-native` enabled, performs real NoteId and Merkle verification.
-/// Without it, returns an error indicating the feature is required.
-pub fn verify_lightweight_payment(
+// ============================================================================
+// Structural verification — used only in tests; production code should use
+// `verification::verify_lightweight_payment` (full crypto, async).
+// ============================================================================
+
+#[cfg(test)]
+fn verify_lightweight_payment_structural(
     context: &PaymentContext,
     header: &LightweightPaymentHeader,
-    _timeout_secs: u64,
+    timeout_secs: u64,
 ) -> Result<LightweightVerifyResponse, LightweightVerifyError> {
-    // 1. Check expiry
-    if context.is_expired(_timeout_secs) {
+    if context.is_expired(timeout_secs) {
         return Err(LightweightVerifyError::ContextExpired);
     }
-
-    // 2. Verify NoteId + inclusion proof
     verify_note_id_and_proof(context, header)
 }
 
-/// Full verification using Miden crypto primitives.
-///
-/// Verifies:
-/// - `note_id == hash(recipient_digest, asset_commitment)` — the note
-///   pays the correct recipient with the correct asset.
-/// - The Merkle inclusion proof is structurally valid (placeholder for
-///   full block-header-based verification, which requires an RPC call).
-///
-/// # Note on block header verification
-///
-/// Full Merkle verification requires fetching the block header for
-/// `header.block_num` from the Miden node to obtain the note tree
-/// root. This function performs the NoteId check and structural
-/// proof validation. The block header fetch is expected to be
-/// performed by the caller (e.g., the facilitator HTTP handler)
-/// before or after calling this function.
-#[cfg(feature = "miden-native")]
+#[cfg(test)]
 fn verify_note_id_and_proof(
     context: &PaymentContext,
     header: &LightweightPaymentHeader,
 ) -> Result<LightweightVerifyResponse, LightweightVerifyError> {
-    // The NoteId verification requires reconstructing the expected note ID
-    // from the payment context. In the full implementation this would:
-    //
-    //   1. Parse recipient_digest from hex
-    //   2. Compute asset_commitment = hash(FungibleAsset(faucet_id, amount))
-    //   3. expected_note_id = hash(recipient_digest, asset_commitment)
-    //   4. Compare with header.note_id
-    //
-    // For now we perform a structural check: the note_id and inclusion_proof
-    // must be non-empty, and the block_num must be non-zero.
-    //
-    // TODO(bobbinth): Wire up full NoteId recomputation once the exact
-    // hash construction is stabilized in miden-protocol.
-
     if header.note_id.is_empty() {
         return Err(LightweightVerifyError::NoteIdMismatch {
             expected: context.recipient_digest.clone(),
@@ -296,43 +242,12 @@ fn verify_note_id_and_proof(
         ));
     }
 
-    // Structural validation passed. In a full implementation the caller
-    // would additionally:
-    //   - Fetch block header for header.block_num via RPC
-    //   - Deserialize the SparseMerklePath from header.inclusion_proof
-    //   - Verify the path against the block's note_commitment root
-
-    #[cfg(feature = "tracing")]
-    tracing::info!(
-        note_id = %header.note_id,
-        block_num = header.block_num,
-        context_asset = %context.asset_faucet_id,
-        context_amount = context.amount,
-        "Lightweight payment verification passed (structural)"
-    );
-
     Ok(LightweightVerifyResponse {
         valid: true,
         note_id: header.note_id.clone(),
         block_num: header.block_num,
         error: None,
     })
-}
-
-/// Stub verification when `miden-native` feature is not enabled.
-///
-/// Always returns an error because lightweight verification requires
-/// Miden crypto primitives to verify NoteId and Merkle proofs.
-#[cfg(not(feature = "miden-native"))]
-fn verify_note_id_and_proof(
-    _context: &PaymentContext,
-    _header: &LightweightPaymentHeader,
-) -> Result<LightweightVerifyResponse, LightweightVerifyError> {
-    Err(LightweightVerifyError::FeatureNotAvailable(
-        "Lightweight verification requires the miden-native feature for \
-         NoteId recomputation and Merkle proof verification."
-            .to_string(),
-    ))
 }
 
 #[cfg(test)]
@@ -362,7 +277,7 @@ mod tests {
         let context = make_context();
         let header = make_header();
         // 0-second timeout means immediately expired
-        let result = verify_lightweight_payment(&context, &header, 0);
+        let result = verify_lightweight_payment_structural(&context, &header, 0);
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -378,7 +293,7 @@ mod tests {
             block_num: 42,
             inclusion_proof: "0xaabb".to_string(),
         };
-        let result = verify_lightweight_payment(&context, &header, 300);
+        let result = verify_lightweight_payment_structural(&context, &header, 300);
         assert!(result.is_err());
     }
 
@@ -390,7 +305,7 @@ mod tests {
             block_num: 42,
             inclusion_proof: String::new(),
         };
-        let result = verify_lightweight_payment(&context, &header, 300);
+        let result = verify_lightweight_payment_structural(&context, &header, 300);
         assert!(result.is_err());
     }
 
@@ -402,34 +317,20 @@ mod tests {
             block_num: 0,
             inclusion_proof: "0xproof".to_string(),
         };
-        let result = verify_lightweight_payment(&context, &header, 300);
+        let result = verify_lightweight_payment_structural(&context, &header, 300);
         assert!(result.is_err());
     }
 
-    #[cfg(feature = "miden-native")]
     #[test]
     fn test_verify_valid_header() {
         let context = make_context();
         let header = make_header();
-        let result = verify_lightweight_payment(&context, &header, 300);
+        let result = verify_lightweight_payment_structural(&context, &header, 300);
         assert!(result.is_ok());
         let response = result.unwrap();
         assert!(response.valid);
         assert_eq!(response.note_id, header.note_id);
         assert_eq!(response.block_num, header.block_num);
         assert!(response.error.is_none());
-    }
-
-    #[cfg(not(feature = "miden-native"))]
-    #[test]
-    fn test_verify_stub_rejects_all() {
-        let context = make_context();
-        let header = make_header();
-        let result = verify_lightweight_payment(&context, &header, 300);
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            LightweightVerifyError::FeatureNotAvailable(_)
-        ));
     }
 }

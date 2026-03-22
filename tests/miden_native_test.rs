@@ -16,9 +16,7 @@ use x402_chain_miden::chain::MidenAccountAddress;
 /// and back without loss.
 #[test]
 fn test_account_id_roundtrip() {
-    use miden_protocol::account::{
-        AccountId, AccountIdVersion, AccountStorageMode, AccountType,
-    };
+    use miden_protocol::account::{AccountId, AccountIdVersion, AccountStorageMode, AccountType};
 
     let original = AccountId::dummy(
         [42u8; 15],
@@ -28,7 +26,9 @@ fn test_account_id_roundtrip() {
     );
 
     let addr = MidenAccountAddress::from_account_id(original);
-    let recovered = addr.to_account_id().expect("should parse back to AccountId");
+    let recovered = addr
+        .to_account_id()
+        .expect("should parse back to AccountId");
 
     assert_eq!(original, recovered);
 }
@@ -36,9 +36,7 @@ fn test_account_id_roundtrip() {
 /// Test that from_account_id produces a valid hex string.
 #[test]
 fn test_from_account_id_hex_format() {
-    use miden_protocol::account::{
-        AccountId, AccountIdVersion, AccountStorageMode, AccountType,
-    };
+    use miden_protocol::account::{AccountId, AccountIdVersion, AccountStorageMode, AccountType};
 
     let id = AccountId::dummy(
         [1u8; 15],
@@ -65,15 +63,13 @@ fn test_from_account_id_hex_format() {
 /// Test that ProvenTransaction serialization/deserialization roundtrip works.
 #[test]
 fn test_proven_transaction_serde_roundtrip() {
-    use miden_protocol::account::{
-        AccountId, AccountIdVersion, AccountStorageMode, AccountType,
-    };
+    use miden_protocol::Word;
+    use miden_protocol::account::{AccountId, AccountIdVersion, AccountStorageMode, AccountType};
     use miden_protocol::asset::FungibleAsset;
     use miden_protocol::block::BlockNumber;
     use miden_protocol::transaction::ProvenTransaction;
     use miden_protocol::utils::serde::{Deserializable, Serializable};
     use miden_protocol::vm::ExecutionProof;
-    use miden_protocol::Word;
 
     let account_id = AccountId::dummy(
         [1; 15],
@@ -116,15 +112,13 @@ fn test_proven_transaction_serde_roundtrip() {
 /// Test that hex encode/decode roundtrip works for ProvenTransaction bytes.
 #[test]
 fn test_proven_transaction_hex_roundtrip() {
-    use miden_protocol::account::{
-        AccountId, AccountIdVersion, AccountStorageMode, AccountType,
-    };
+    use miden_protocol::Word;
+    use miden_protocol::account::{AccountId, AccountIdVersion, AccountStorageMode, AccountType};
     use miden_protocol::asset::FungibleAsset;
     use miden_protocol::block::BlockNumber;
     use miden_protocol::transaction::ProvenTransaction;
     use miden_protocol::utils::serde::{Deserializable, Serializable};
     use miden_protocol::vm::ExecutionProof;
-    use miden_protocol::Word;
 
     let account_id = AccountId::dummy(
         [7; 15],
@@ -157,8 +151,7 @@ fn test_proven_transaction_hex_roundtrip() {
     let bytes = tx.to_bytes();
     let hex_str = hex::encode(&bytes);
     let decoded_bytes = hex::decode(&hex_str).expect("should decode hex");
-    let recovered =
-        ProvenTransaction::read_from_bytes(&decoded_bytes).expect("should deserialize");
+    let recovered = ProvenTransaction::read_from_bytes(&decoded_bytes).expect("should deserialize");
 
     assert_eq!(tx.id(), recovered.id());
 }
@@ -190,9 +183,7 @@ fn test_p2id_script_root_consistency() {
 /// Test that P2ID note can be created and its inputs contain the target account.
 #[test]
 fn test_p2id_note_target_extraction() {
-    use miden_protocol::account::{
-        AccountId, AccountIdVersion, AccountStorageMode, AccountType,
-    };
+    use miden_protocol::account::{AccountId, AccountIdVersion, AccountStorageMode, AccountType};
     use miden_protocol::asset::{Asset, FungibleAsset};
     use miden_protocol::note::NoteType;
     use miden_standards::note::create_p2id_note;
@@ -237,5 +228,8 @@ fn test_p2id_note_target_extraction() {
     assert!(inputs.len() >= 2, "P2ID note should have at least 2 inputs");
 
     let recovered_target = AccountId::new_unchecked([inputs[1], inputs[0]]);
-    assert_eq!(recovered_target, target, "Extracted target should match original");
+    assert_eq!(
+        recovered_target, target,
+        "Extracted target should match original"
+    );
 }

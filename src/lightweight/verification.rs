@@ -106,12 +106,9 @@ pub async fn verify_lightweight_payment(
         .strip_prefix("0x")
         .unwrap_or(&payment_context.recipient_digest);
 
-    let recipient_digest_bytes =
-        hex::decode(recipient_digest_hex).map_err(|e| {
-            MidenExactError::DeserializationError(format!(
-                "Invalid hex in recipient_digest: {e}"
-            ))
-        })?;
+    let recipient_digest_bytes = hex::decode(recipient_digest_hex).map_err(|e| {
+        MidenExactError::DeserializationError(format!("Invalid hex in recipient_digest: {e}"))
+    })?;
 
     let recipient_digest = RpoDigest::read_from_bytes(&recipient_digest_bytes).map_err(|e| {
         MidenExactError::DeserializationError(format!(
@@ -175,9 +172,7 @@ pub async fn verify_lightweight_payment(
         .unwrap_or(&payment_header.inclusion_proof);
 
     let proof_bytes = hex::decode(proof_hex).map_err(|e| {
-        MidenExactError::DeserializationError(format!(
-            "Invalid hex in inclusion_proof: {e}"
-        ))
+        MidenExactError::DeserializationError(format!("Invalid hex in inclusion_proof: {e}"))
     })?;
 
     let _merkle_path = SparseMerklePath::read_from_bytes(&proof_bytes).map_err(|e| {
@@ -193,9 +188,7 @@ pub async fn verify_lightweight_payment(
         .unwrap_or(&cached_header.note_root);
 
     let _note_root_bytes = hex::decode(note_root_hex).map_err(|e| {
-        MidenExactError::DeserializationError(format!(
-            "Invalid hex in cached note_root: {e}"
-        ))
+        MidenExactError::DeserializationError(format!("Invalid hex in cached note_root: {e}"))
     })?;
 
     // NOTE: Full SparseMerklePath::verify() call requires:
@@ -262,7 +255,7 @@ fn reconstruct_note_id(
     asset: &miden_protocol::asset::FungibleAsset,
 ) -> Result<miden_protocol::note::NoteId, MidenExactError> {
     use miden_protocol::asset::Asset;
-    use miden_protocol::note::{NoteAssets, NoteId, NoteMetadata, NoteType};
+    use miden_protocol::note::{NoteAssets, NoteId};
 
     // The NoteId in Miden is computed from the full note header:
     //   NoteId = hash(recipient, asset_commitment, metadata)
@@ -299,9 +292,7 @@ fn reconstruct_note_id(
 /// submitted value and the server's reconstructed expected value.
 #[cfg(any(feature = "miden-native", test))]
 fn normalize_hex_string(s: &str) -> String {
-    s.strip_prefix("0x")
-        .unwrap_or(s)
-        .to_lowercase()
+    s.strip_prefix("0x").unwrap_or(s).to_lowercase()
 }
 
 // ============================================================================

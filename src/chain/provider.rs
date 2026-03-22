@@ -48,12 +48,8 @@ impl MidenChainProvider {
             rpc_url: config.rpc_url.clone(),
             #[cfg(feature = "miden-client-native")]
             rpc_client: {
-                let endpoint = config.rpc_url.as_str()
-                    .try_into()
-                    .unwrap_or_default();
-                std::sync::Arc::new(
-                    miden_client::rpc::GrpcClient::new(&endpoint, 10_000),
-                )
+                let endpoint = config.rpc_url.as_str().try_into().unwrap_or_default();
+                std::sync::Arc::new(miden_client::rpc::GrpcClient::new(&endpoint, 10_000))
             },
             #[cfg(feature = "miden-client-native")]
             genesis_committed: std::sync::atomic::AtomicBool::new(false),
@@ -144,7 +140,8 @@ impl MidenChainProvider {
                 "Querying account balance via RPC"
             );
 
-            let fetched = self.rpc_client
+            let fetched = self
+                .rpc_client
                 .get_account_details(account)
                 .await
                 .map_err(|e| {
@@ -155,15 +152,11 @@ impl MidenChainProvider {
 
             // Only public accounts expose their vault
             let balance = match fetched.account() {
-                Some(acct) => {
-                    acct.vault()
-                        .get_balance(faucet)
-                        .unwrap_or(0)
-                }
+                Some(acct) => acct.vault().get_balance(faucet).unwrap_or(0),
                 None => {
-                    return Err(MidenProviderError::QueryError(
-                        format!("Account '{account_id}' is private — vault not visible via RPC")
-                    ));
+                    return Err(MidenProviderError::QueryError(format!(
+                        "Account '{account_id}' is private — vault not visible via RPC"
+                    )));
                 }
             };
 

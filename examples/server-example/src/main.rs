@@ -22,8 +22,8 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
-use x402_chain_miden::chain::MidenTokenDeployment;
 use x402_chain_miden::V2MidenExact;
+use x402_chain_miden::chain::MidenTokenDeployment;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -62,7 +62,7 @@ async fn root_handler() -> impl IntoResponse {
 /// This example manually constructs the 402 response to show the structure.
 async fn paid_content_handler() -> impl IntoResponse {
     // Create the price tag for 1 USDC on Miden testnet
-    let recipient = "0xaabbccddee11223344556677889900aabbccddee11223344556677889900"
+    let recipient = "0xaabbccddeeff00112233aabbccddee"
         .parse()
         .expect("valid recipient address");
 
@@ -101,7 +101,7 @@ async fn paid_content_handler() -> impl IntoResponse {
 
 /// Shows the price tag configuration without requiring payment.
 async fn price_info_handler() -> impl IntoResponse {
-    let recipient = "0xaabbccddee11223344556677889900aabbccddee11223344556677889900"
+    let recipient = "0xaabbccddeeff00112233aabbccddee"
         .parse()
         .expect("valid recipient address");
 

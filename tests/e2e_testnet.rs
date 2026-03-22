@@ -14,14 +14,16 @@
 
 use std::sync::Arc;
 
+use miden_client::Client;
 use miden_client::builder::ClientBuilder;
 use miden_client::keystore::FilesystemKeyStore;
 use miden_client::rpc::Endpoint;
-use miden_client::Client;
 use miden_client_sqlite_store::SqliteStore;
 use tokio::sync::Mutex;
 
-use x402_chain_miden::chain::{MidenAccountAddress, MidenChainConfig, MidenChainProvider, MidenChainReference};
+use x402_chain_miden::chain::{
+    MidenAccountAddress, MidenChainConfig, MidenChainProvider, MidenChainReference,
+};
 
 // ============================================================================
 // Helpers

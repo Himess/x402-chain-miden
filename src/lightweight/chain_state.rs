@@ -178,9 +178,10 @@ impl FacilitatorChainState {
     ) -> Result<CachedBlockHeader, MidenExactError> {
         // Fast path: check cache (read lock)
         {
-            let cache = self.block_headers.read().map_err(|e| {
-                MidenExactError::ProviderError(format!("Cache lock poisoned: {e}"))
-            })?;
+            let cache = self
+                .block_headers
+                .read()
+                .map_err(|e| MidenExactError::ProviderError(format!("Cache lock poisoned: {e}")))?;
 
             if let Some(header) = cache.get(&block_num) {
                 return Ok(header.clone());
@@ -192,9 +193,10 @@ impl FacilitatorChainState {
 
         // Cache the result (write lock)
         {
-            let mut cache = self.block_headers.write().map_err(|e| {
-                MidenExactError::ProviderError(format!("Cache lock poisoned: {e}"))
-            })?;
+            let mut cache = self
+                .block_headers
+                .write()
+                .map_err(|e| MidenExactError::ProviderError(format!("Cache lock poisoned: {e}")))?;
 
             // Evict oldest entries if cache is too large
             if cache.len() >= MAX_CACHED_HEADERS {
@@ -344,15 +346,9 @@ impl FacilitatorChainState {
     ///
     /// Entries are sorted by `cached_at` (ascending) and the oldest
     /// `count` are removed.
-    fn evict_oldest_entries(
-        &self,
-        cache: &mut HashMap<u32, CachedBlockHeader>,
-        count: usize,
-    ) {
-        let mut entries: Vec<(u32, std::time::Instant)> = cache
-            .iter()
-            .map(|(k, v)| (*k, v.cached_at))
-            .collect();
+    fn evict_oldest_entries(&self, cache: &mut HashMap<u32, CachedBlockHeader>, count: usize) {
+        let mut entries: Vec<(u32, std::time::Instant)> =
+            cache.iter().map(|(k, v)| (*k, v.cached_at)).collect();
 
         entries.sort_by_key(|(_, instant)| *instant);
 
@@ -443,9 +439,7 @@ impl FacilitatorChainState {
             .get_block_header_by_number(None, true)
             .await
             .map_err(|e| {
-                MidenExactError::ProviderError(format!(
-                    "Failed to fetch latest block header: {e}"
-                ))
+                MidenExactError::ProviderError(format!("Failed to fetch latest block header: {e}"))
             })?;
 
         let block_num = block_header.block_num().into();

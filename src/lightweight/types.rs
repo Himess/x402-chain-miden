@@ -73,8 +73,7 @@ pub struct LightweightPaymentRequirement {
     /// The agent needs this to construct the P2ID note (the `recipient_digest`
     /// alone is not sufficient to build the note — the agent also needs to
     /// know the target account). This is the raw account ID, not the digest.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pay_to: Option<String>,
+    pub pay_to: String,
 
     /// Optional hex-encoded serial number (32 bytes).
     ///
@@ -245,7 +244,7 @@ mod tests {
             amount: 1_000_000,
             note_tag: 12345,
             network: ChainId::new("miden", "testnet"),
-            pay_to: None,
+            pay_to: "0xaabbccddeeff00112233aabbccddee".to_string(),
             serial_num: None,
         };
         let json = serde_json::to_string(&req).unwrap();
@@ -271,7 +270,7 @@ mod tests {
             amount: 500_000,
             note_tag: 99,
             network: ChainId::new("miden", "mainnet"),
-            pay_to: Some("0xaabbccddeeff00112233aabbccddee".to_string()),
+            pay_to: "0xaabbccddeeff00112233aabbccddee".to_string(),
             serial_num: Some(
                 "0x1111111122222222333333334444444455555555666666667777777788888888".to_string(),
             ),
@@ -379,7 +378,8 @@ mod tests {
             "asset": "0xccdd",
             "amount": 100,
             "noteTag": 1,
-            "network": "miden:testnet"
+            "network": "miden:testnet",
+            "payTo": "0xaabbccddeeff00112233aabbccddee"
         }"#;
         let req: LightweightPaymentRequirement = serde_json::from_str(json).unwrap();
         assert!(req.serial_num.is_none());

@@ -56,17 +56,17 @@
 //!   proof verification
 //! - **Simplicity**: No need for the server to run the Miden VM verifier
 
-pub mod types;
-pub mod server;
 pub mod chain_state;
+pub mod server;
+pub mod types;
 pub mod verification;
 
 #[cfg(feature = "client")]
 pub mod client;
 
-pub use types::*;
-pub use server::*;
 pub use chain_state::{CachedBlockHeader, FacilitatorChainState};
+pub use server::*;
+pub use types::*;
 
 /// Async version of lightweight payment verification that uses
 /// [`FacilitatorChainState`] for block header lookups and performs

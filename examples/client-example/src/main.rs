@@ -61,7 +61,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing::info!(
                 index = i,
                 scheme = accept.get("scheme").and_then(|v| v.as_str()).unwrap_or("?"),
-                network = accept.get("network").and_then(|v| v.as_str()).unwrap_or("?"),
+                network = accept
+                    .get("network")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?"),
                 amount = accept.get("amount").and_then(|v| v.as_str()).unwrap_or("?"),
                 "Payment option"
             );

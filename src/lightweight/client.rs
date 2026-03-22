@@ -89,9 +89,7 @@ pub trait LightweightPayerLike: Send + Sync {
 pub struct LightweightMidenPayer {
     account_id_hex: String,
     client: std::sync::Arc<
-        tokio::sync::Mutex<
-            miden_client::Client<miden_client::keystore::FilesystemKeyStore>,
-        >,
+        tokio::sync::Mutex<miden_client::Client<miden_client::keystore::FilesystemKeyStore>>,
     >,
 }
 
@@ -108,9 +106,7 @@ impl LightweightMidenPayer {
     pub fn new(
         account_id_hex: impl Into<String>,
         client: std::sync::Arc<
-            tokio::sync::Mutex<
-                miden_client::Client<miden_client::keystore::FilesystemKeyStore>,
-            >,
+            tokio::sync::Mutex<miden_client::Client<miden_client::keystore::FilesystemKeyStore>>,
         >,
     ) -> Self {
         Self {
@@ -157,31 +153,21 @@ impl LightweightPayerLike for LightweightMidenPayer {
         use x402_types::scheme::client::X402Error;
 
         // 1. Parse sender account ID
-        let sender = AccountId::from_hex(&self.account_id_hex).map_err(|e| {
-            X402Error::SigningError(format!("Invalid sender account ID: {e}"))
-        })?;
+        let sender = AccountId::from_hex(&self.account_id_hex)
+            .map_err(|e| X402Error::SigningError(format!("Invalid sender account ID: {e}")))?;
 
         // 2. Parse faucet account ID
-        let faucet = AccountId::from_hex(&requirement.asset).map_err(|e| {
-            X402Error::SigningError(format!("Invalid faucet account ID: {e}"))
-        })?;
+        let faucet = AccountId::from_hex(&requirement.asset)
+            .map_err(|e| X402Error::SigningError(format!("Invalid faucet account ID: {e}")))?;
 
         // 3. Resolve the target account ID from `pay_to` field
-        let target_hex = requirement.pay_to.as_deref().ok_or_else(|| {
-            X402Error::SigningError(
-                "pay_to field is required in LightweightPaymentRequirement \
-                 to identify the P2ID note target"
-                    .to_string(),
-            )
-        })?;
-        let target = AccountId::from_hex(target_hex).map_err(|e| {
+        let target = AccountId::from_hex(&requirement.pay_to).map_err(|e| {
             X402Error::SigningError(format!("Invalid target account ID (pay_to): {e}"))
         })?;
 
         // 4. Create fungible asset
-        let asset = FungibleAsset::new(faucet, requirement.amount).map_err(|e| {
-            X402Error::SigningError(format!("Failed to create FungibleAsset: {e}"))
-        })?;
+        let asset = FungibleAsset::new(faucet, requirement.amount)
+            .map_err(|e| X402Error::SigningError(format!("Failed to create FungibleAsset: {e}")))?;
 
         // 5. Build P2ID note as private (NoteType::Private) — the note content
         //    does not need to be public since the server verifies via inclusion proof
@@ -196,18 +182,14 @@ impl LightweightPayerLike for LightweightMidenPayer {
         let tx_request = miden_client::transaction::TransactionRequestBuilder::new()
             .build_pay_to_id(payment_data, NoteType::Private, client_guard.rng())
             .map_err(|e| {
-                X402Error::SigningError(format!(
-                    "Failed to build P2ID TransactionRequest: {e}"
-                ))
+                X402Error::SigningError(format!("Failed to build P2ID TransactionRequest: {e}"))
             })?;
 
         // 6. Execute transaction locally in the Miden VM
         let tx_result = client_guard
             .execute_transaction(sender, tx_request)
             .await
-            .map_err(|e| {
-                X402Error::SigningError(format!("Transaction execution failed: {e}"))
-            })?;
+            .map_err(|e| X402Error::SigningError(format!("Transaction execution failed: {e}")))?;
 
         // 7. Extract note ID from the created output notes
         let note_id = tx_result
@@ -216,9 +198,7 @@ impl LightweightPayerLike for LightweightMidenPayer {
             .next()
             .map(|n| format!("{}", n.id()))
             .ok_or_else(|| {
-                X402Error::SigningError(
-                    "Transaction produced no output notes".to_string(),
-                )
+                X402Error::SigningError("Transaction produced no output notes".to_string())
             })?;
 
         // 8. Generate STARK proof
@@ -229,9 +209,7 @@ impl LightweightPayerLike for LightweightMidenPayer {
         let proven_tx = prover
             .prove(tx_result.into())
             .await
-            .map_err(|e| {
-                X402Error::SigningError(format!("Transaction proving failed: {e}"))
-            })?;
+            .map_err(|e| X402Error::SigningError(format!("Transaction proving failed: {e}")))?;
 
         // 9. Submit the proven transaction directly to the Miden network.
         //    Re-acquire the lock to use the client's submission mechanism.
@@ -256,9 +234,10 @@ impl LightweightPayerLike for LightweightMidenPayer {
         //     inclusion proof if the note was committed to a block.
         let mut client_guard = self.client.lock().await;
 
-        client_guard.sync_state().await.map_err(|e| {
-            X402Error::SigningError(format!("State sync failed: {e}"))
-        })?;
+        client_guard
+            .sync_state()
+            .await
+            .map_err(|e| X402Error::SigningError(format!("State sync failed: {e}")))?;
 
         // 11. Extract inclusion proof from the client's store.
         //     The miden-client tracks output notes and their inclusion
@@ -299,11 +278,10 @@ mod tests {
             amount: 1_000_000,
             note_tag: 42,
             network: x402_types::chain::ChainId::new("miden", "testnet"),
-            pay_to: Some("0xaabbccddeeff00112233aabbccddee".to_string()),
+            pay_to: "0xaabbccddeeff00112233aabbccddee".to_string(),
             serial_num: None,
         };
-        // pay_to is part of the extended requirement but is stored
-        // in the LightweightPaymentRequirement as an optional field.
+        // pay_to is a required field in LightweightPaymentRequirement.
         // The agent needs it to know where to send the P2ID note.
         assert!(req.serial_num.is_none());
     }

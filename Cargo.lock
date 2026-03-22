@@ -5854,8 +5854,8 @@ dependencies = [
 name = "x402-chain-miden"
 version = "0.1.0"
 dependencies = [
- "alloy-primitives",
  "async-trait",
+ "getrandom 0.2.17",
  "hex",
  "miden-client",
  "miden-client-sqlite-store",
@@ -5890,6 +5890,8 @@ name = "x402-miden-facilitator"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "getrandom 0.2.17",
+ "hex",
  "serde",
  "serde_json",
  "tokio",

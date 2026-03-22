@@ -38,7 +38,6 @@ impl V2MidenExact {
     /// # Returns
     ///
     /// A [`v2::PriceTag`] that can be included in a `PaymentRequired` response.
-    #[allow(dead_code)]
     pub fn price_tag(pay_to: MidenAccountAddress, asset: MidenDeployedTokenAmount) -> v2::PriceTag {
         let chain_id: ChainId = asset.token.chain_reference.clone().into();
         let requirements = v2::PaymentRequirements {
