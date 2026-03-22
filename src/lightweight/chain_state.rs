@@ -83,13 +83,13 @@ pub struct CachedBlockHeader {
     /// The block number.
     pub block_num: u32,
 
-    /// The note tree root (hex-encoded `RpoDigest`).
+    /// The note tree root (hex-encoded `Word`).
     ///
     /// The `SparseMerklePath` from the agent's payment header is verified
     /// against this root to prove note inclusion.
     pub note_root: String,
 
-    /// The block header commitment (hex-encoded `RpoDigest`).
+    /// The block header commitment (hex-encoded `Word`).
     ///
     /// Used for MMR (Merkle Mountain Range) verification to confirm
     /// the block is part of the canonical chain.

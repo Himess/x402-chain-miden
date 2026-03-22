@@ -48,7 +48,7 @@ const DEFAULT_PAYMENT_TIMEOUT_SECS: u64 = 300;
 ///
 /// 1. Check that the payment context has not expired.
 /// 2. Reconstruct `expected_note_id = hash(recipient_digest, asset_commitment)`:
-///    - Parse `recipient_digest` from hex into an `RpoDigest`
+///    - Parse `recipient_digest` from hex into a `Word`
 ///    - Compute the asset commitment from `FungibleAsset::new(faucet_id, amount)`
 ///    - Compute the `NoteId` using miden-protocol's hashing
 /// 3. Compare the agent's `note_id` with the expected value.
@@ -79,7 +79,6 @@ pub async fn verify_lightweight_payment(
     use miden_protocol::Word;
     use miden_protocol::account::AccountId;
     use miden_protocol::asset::FungibleAsset;
-    use miden_protocol::crypto::hash::RpoDigest;
     use miden_protocol::crypto::merkle::SparseMerklePath;
     use miden_protocol::note::{NoteId, NoteMetadata, compute_note_commitment};
     use miden_protocol::utils::serde::Deserializable;
@@ -103,7 +102,7 @@ pub async fn verify_lightweight_payment(
     //    and amount in the payment context.
     // ------------------------------------------------------------------
 
-    // 2a. Parse recipient_digest from hex -> RpoDigest
+    // 2a. Parse recipient_digest from hex -> Word
     let recipient_digest_hex = payment_context
         .recipient_digest
         .strip_prefix("0x")
@@ -113,9 +112,9 @@ pub async fn verify_lightweight_payment(
         MidenExactError::DeserializationError(format!("Invalid hex in recipient_digest: {e}"))
     })?;
 
-    let recipient_digest = RpoDigest::read_from_bytes(&recipient_digest_bytes).map_err(|e| {
+    let recipient_digest = Word::read_from_bytes(&recipient_digest_bytes).map_err(|e| {
         MidenExactError::DeserializationError(format!(
-            "Failed to deserialize recipient_digest as RpoDigest: {e}"
+            "Failed to deserialize recipient_digest as Word: {e}"
         ))
     })?;
 
@@ -284,7 +283,7 @@ pub async fn verify_lightweight_payment(
 /// serves as the asset commitment in the NoteId hash.
 #[cfg(feature = "miden-native")]
 fn reconstruct_note_id(
-    recipient_digest: &miden_protocol::crypto::hash::RpoDigest,
+    recipient_digest: &miden_protocol::Word,
     asset: &miden_protocol::asset::FungibleAsset,
 ) -> Result<miden_protocol::note::NoteId, MidenExactError> {
     use miden_protocol::asset::Asset;
@@ -314,7 +313,7 @@ fn reconstruct_note_id(
 
     // NoteId = hash(recipient_digest, asset_commitment)
     // This is what the Miden protocol uses internally.
-    let note_id = NoteId::new(recipient_digest.clone(), asset_commitment);
+    let note_id = NoteId::new(*recipient_digest, asset_commitment);
 
     Ok(note_id)
 }
