@@ -4,22 +4,23 @@
 //! Miden ZK rollup. It uses CAIP-2 chain identifiers (`miden:testnet`, `miden:mainnet`)
 //! and implements the V2 "exact" payment scheme based on P2ID (Pay-to-ID) notes.
 //!
-//! # Architecture
+//! # Architecture (Lightweight / bobbinth's design)
 //!
-//! Unlike EVM chains that use `transferWithAuthorization` (ERC-3009) for gasless
-//! token transfers, Miden uses a note-based model:
+//! Unlike the legacy STARK-proof-based flow, the lightweight design has the
+//! agent submit the transaction directly to the Miden network and send only
+//! a compact inclusion proof (~200 bytes) to the facilitator:
 //!
-//! 1. **Client** creates a P2ID note transferring assets to the recipient
-//! 2. **Client** executes and proves the transaction locally (STARK proof)
-//! 3. **Facilitator** verifies the STARK proof and submits the proven transaction
-//! 4. **Settlement** occurs when the Miden network includes the transaction in a block
+//! 1. **Server** generates a payment requirement with a `recipient_digest`
+//! 2. **Agent** creates a P2ID note, proves it, and submits to the network
+//! 3. **Agent** sends `{note_id, block_num, inclusion_proof}` to the server
+//! 4. **Server** verifies `NoteId` matches and the Merkle inclusion proof is valid
 //!
 //! # Feature Flags
 //!
 //! - `server` - Server-side price tag generation
-//! - `client` - Client-side payment signing (P2ID note creation + proving)
-//! - `facilitator` - Facilitator-side payment verification and settlement
-//! - `miden-native` - Real STARK proof verification using `miden-tx` and `miden-protocol`
+//! - `client` - Client-side lightweight payment creation
+//! - `facilitator` - Facilitator-side chain provider and lightweight verification
+//! - `miden-native` - Miden protocol types using `miden-protocol`
 //! - `miden-client-native` - Full miden-client integration (includes `miden-native`)
 //!
 //! # Usage
@@ -32,35 +33,19 @@
 //!
 //! let token = MidenTokenDeployment::testnet_usdc();
 //! let price_tag = V2MidenExact::price_tag(
-//!     "0x1234abcd...",  // recipient Miden account ID (hex)
+//!     "0x1234abcd...".parse().unwrap(),
 //!     token.amount(1_000_000),  // 1 USDC (6 decimals)
 //! );
-//! ```
-//!
-//! ## Client: Signing a Payment
-//!
-//! ```ignore
-//! use x402_chain_miden::V2MidenExactClient;
-//!
-//! let client = V2MidenExactClient::new(signer);
-//! let candidates = client.accept(&payment_required);
 //! ```
 
 pub mod chain;
 pub mod lightweight;
-pub mod privacy;
 pub mod v2_miden_exact;
 
 mod networks;
 pub use networks::*;
 
 pub use v2_miden_exact::V2MidenExact;
-
-#[cfg(feature = "client")]
-pub use v2_miden_exact::client::V2MidenExactClient;
-
-#[cfg(all(feature = "client", feature = "miden-client-native"))]
-pub use v2_miden_exact::client::MidenClientSigner;
 
 #[cfg(all(feature = "client", feature = "miden-client-native"))]
 pub use lightweight::client::LightweightMidenPayer;

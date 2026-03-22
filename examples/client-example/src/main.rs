@@ -1,12 +1,12 @@
 //! Example client that pays for HTTP requests using Miden.
 //!
-//! This example demonstrates how a client (human or AI agent) would:
-//! 1. Make a request to a protected endpoint
-//! 2. Receive a 402 Payment Required response
-//! 3. Create a P2ID payment on Miden
-//! 4. Retry the request with the payment signature
+//! This example demonstrates how a client (human or AI agent) would use
+//! the lightweight payment flow (bobbinth's design):
 //!
-//! In production, `x402-reqwest` middleware handles steps 2-4 automatically.
+//! 1. Make a request to a protected endpoint
+//! 2. Receive a 402 Payment Required response with a lightweight requirement
+//! 3. Create a P2ID payment, submit to Miden network
+//! 4. Send back the lightweight payment header (note_id + inclusion proof)
 //!
 //! # Running
 //!
@@ -18,73 +18,7 @@
 //! ENDPOINT=http://localhost:3000/paid-content cargo run -p x402-miden-client-example
 //! ```
 
-use async_trait::async_trait;
 use serde::Deserialize;
-use x402_chain_miden::v2_miden_exact::client::MidenSignerLike;
-use x402_chain_miden::V2MidenExactClient;
-use x402_types::scheme::client::X402Error;
-
-/// A mock Miden signer for demonstration purposes.
-///
-/// In production, this would wrap `miden-client`'s wallet and transaction
-/// proving capabilities. The signer creates P2ID notes, executes transactions
-/// in Miden VM, generates STARK proofs, and returns the serialized
-/// ProvenTransaction.
-#[derive(Debug, Clone)]
-struct MockMidenSigner {
-    account_id: String,
-}
-
-#[async_trait]
-impl MidenSignerLike for MockMidenSigner {
-    fn account_id(&self) -> String {
-        self.account_id.clone()
-    }
-
-    async fn create_and_prove_p2id(
-        &self,
-        recipient: &str,
-        faucet_id: &str,
-        amount: u64,
-    ) -> Result<(String, String, String), X402Error> {
-        // In production, this would:
-        // 1. Create a P2ID note: sender → recipient, amount of faucet token
-        // 2. Build a TransactionRequest with the note as output
-        // 3. Execute the transaction in Miden VM (client-side)
-        // 4. Generate a STARK proof using LocalTransactionProver
-        // 5. Serialize the ProvenTransaction to hex
-        // 6. Return (proven_tx_hex, transaction_id_hex, transaction_inputs_hex)
-        //
-        // Example with real miden-client:
-        // ```
-        // let note = P2idNote::create(sender, recipient, assets, NoteType::Public, ...)?;
-        // let tx_request = TransactionRequest::new().with_output_notes(vec![note]);
-        // let executed_tx = executor.execute_transaction(account_id, block, inputs, tx_request)?;
-        // let proven_tx = prover.prove(executed_tx)?;
-        // let tx_bytes = proven_tx.to_bytes();
-        // let tx_id = proven_tx.id().to_hex();
-        // ```
-
-        tracing::info!(
-            recipient = recipient,
-            faucet_id = faucet_id,
-            amount = amount,
-            "Creating mock P2ID payment"
-        );
-
-        // Mock: return placeholder hex values
-        let mock_proven_tx = format!(
-            "deadbeef{:0>16x}{:0>16x}{}",
-            amount,
-            self.account_id.len(),
-            hex::encode(recipient.as_bytes())
-        );
-        let mock_tx_id = format!("{:0>64x}", amount);
-        let mock_tx_inputs = "01020304".to_string();
-
-        Ok((mock_proven_tx, mock_tx_id, mock_tx_inputs))
-    }
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -105,15 +39,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let endpoint = std::env::var("ENDPOINT")
         .unwrap_or_else(|_| "http://localhost:3000/paid-content".to_string());
-
-    // Create a mock Miden signer
-    // In production: wrap a real miden-client wallet
-    let signer = MockMidenSigner {
-        account_id: "0x00112233445566778899aabbccddeeff00112233445566778899aabbccddee".to_string(),
-    };
-
-    // Create the x402 Miden client
-    let _client = V2MidenExactClient::new(signer.clone());
 
     // Step 1: Make initial request
     tracing::info!("Requesting {endpoint}");
@@ -142,50 +67,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
 
-        // Step 3: Create payment using the signer
-        // In production, x402-reqwest middleware does this automatically:
-        //   let x402_client = X402Client::new()
-        //       .register(V2MidenExactClient::new(real_signer));
-        //   let client = Client::new().with_payments(x402_client).build();
-        //   let res = client.get(endpoint).send().await?;
+        // In production with the lightweight flow:
+        // 1. Parse the LightweightPaymentRequirement from the 402 response
+        // 2. Create a P2ID note using the recipient_digest
+        // 3. Prove and submit the transaction to the Miden network
+        // 4. Sync state to get the note inclusion proof
+        // 5. Send {note_id, block_num, inclusion_proof} to the server
         //
-        // For this demo, we show the manual flow:
-
-        if let Some(accept) = payment_required.accepts.first() {
-            let recipient = accept
-                .get("payTo")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            let faucet = accept
-                .get("asset")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            let amount: u64 = accept
-                .get("amount")
-                .and_then(|v| v.as_str())
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
-
-            let (proven_tx, tx_id, _tx_inputs) = signer
-                .create_and_prove_p2id(recipient, faucet, amount)
-                .await?;
-
-            tracing::info!(
-                tx_id = tx_id,
-                proven_tx_len = proven_tx.len(),
-                "Payment created — would retry with PAYMENT-SIGNATURE header"
-            );
-
-            // Step 4: In production, retry with payment header
-            // let payment_payload = base64(json({
-            //     "x402Version": 2,
-            //     "accepted": accept,
-            //     "payload": { "from": signer.account_id(), "provenTransaction": proven_tx, "transactionId": tx_id },
-            // }));
-            // let response = http.get(&endpoint)
-            //     .header("PAYMENT-SIGNATURE", payment_payload)
-            //     .send().await?;
-        }
+        // Example with LightweightMidenPayer:
+        //   let payer = LightweightMidenPayer::new(account_id, client);
+        //   let header = payer.create_and_submit_payment(&requirement).await?;
+        //   // Send header to server's /verify-lightweight endpoint
+        tracing::info!(
+            "In production, the agent would create and submit a P2ID note, \
+             then send a lightweight payment header to the server."
+        );
     } else {
         let body = response.text().await?;
         tracing::info!("Response: {body}");

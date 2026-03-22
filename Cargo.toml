@@ -28,9 +28,9 @@ all-features = true
 
 [features]
 default = []
-client = ["async-trait", "alloy-primitives"]
+client = ["async-trait"]
 server = []
-facilitator = ["async-trait", "tokio"]
+facilitator = ["tokio"]
 full = ["client", "server", "facilitator"]
 miden-native = ["dep:miden-protocol", "dep:miden-tx", "dep:miden-standards", "tracing"]
 miden-client-native = ["miden-native", "dep:miden-client", "tokio"]

@@ -1,7 +1,7 @@
 //! Integration tests for x402-chain-miden.
 //!
-//! These tests verify the complete payment flow including price tag creation,
-//! client payment signing, and facilitator verification/settlement.
+//! These tests verify core types, price tag creation, and the lightweight
+//! payment verification design.
 
 use x402_chain_miden::chain::{
     MidenAccountAddress, MidenChainReference, MidenTokenDeployment,
@@ -219,79 +219,14 @@ mod server_tests {
 }
 
 // ============================================================================
-// Client Tests (client feature)
-// ============================================================================
-
-#[cfg(feature = "client")]
-mod client_tests {
-    use super::*;
-    use async_trait::async_trait;
-    use x402_chain_miden::v2_miden_exact::client::MidenSignerLike;
-    use x402_chain_miden::V2MidenExactClient;
-    use x402_types::scheme::client::X402Error;
-
-    #[derive(Debug, Clone)]
-    struct MockSigner {
-        id: String,
-    }
-
-    #[async_trait]
-    impl MidenSignerLike for MockSigner {
-        fn account_id(&self) -> String {
-            self.id.clone()
-        }
-
-        async fn create_and_prove_p2id(
-            &self,
-            _recipient: &str,
-            _faucet_id: &str,
-            _amount: u64,
-        ) -> Result<(String, String, String), X402Error> {
-            Ok(("deadbeef".to_string(), "cafebabe".to_string(), "01020304".to_string()))
-        }
-    }
-
-    #[test]
-    fn test_client_creation() {
-        let signer = MockSigner {
-            id: "0x1234".to_string(),
-        };
-        let _client = V2MidenExactClient::new(signer);
-    }
-
-    #[test]
-    fn test_client_scheme_id() {
-        let signer = MockSigner {
-            id: "0x1234".to_string(),
-        };
-        let client = V2MidenExactClient::new(signer);
-        assert_eq!(client.namespace(), "miden");
-        assert_eq!(client.scheme(), "exact");
-        assert_eq!(client.x402_version(), 2);
-    }
-}
-
-// ============================================================================
-// Facilitator Tests (facilitator feature)
+// Facilitator Tests (facilitator feature) — provider only
 // ============================================================================
 
 #[cfg(feature = "facilitator")]
 mod facilitator_tests {
     use super::*;
     use x402_chain_miden::chain::{MidenChainConfig, MidenChainProvider};
-    use x402_chain_miden::v2_miden_exact::facilitator::V2MidenExactFacilitator;
     use x402_types::chain::ChainProviderOps;
-    use x402_types::scheme::X402SchemeFacilitator;
-
-    #[test]
-    fn test_facilitator_creation() {
-        let config = MidenChainConfig {
-            chain_reference: MidenChainReference::testnet(),
-            rpc_url: "https://rpc.testnet.miden.io".to_string(),
-        };
-        let provider = MidenChainProvider::from_config(&config);
-        let _facilitator = V2MidenExactFacilitator::new(provider);
-    }
 
     #[test]
     fn test_provider_chain_id() {
@@ -314,74 +249,27 @@ mod facilitator_tests {
         let chain_id = provider.chain_id();
         assert_eq!(chain_id.to_string(), "miden:mainnet");
     }
-
-    #[tokio::test]
-    async fn test_facilitator_supported() {
-        let config = MidenChainConfig {
-            chain_reference: MidenChainReference::testnet(),
-            rpc_url: "https://rpc.testnet.miden.io".to_string(),
-        };
-        let provider = MidenChainProvider::from_config(&config);
-        let facilitator = V2MidenExactFacilitator::new(provider);
-
-        let supported = facilitator.supported().await.unwrap();
-        assert_eq!(supported.kinds.len(), 1);
-        assert_eq!(supported.kinds[0].scheme, "exact");
-        assert_eq!(supported.kinds[0].x402_version, 2);
-        assert_eq!(supported.kinds[0].network, "miden:testnet");
-    }
 }
 
 // ============================================================================
-// Miden Exact Payload Serialization Tests
+// ExactScheme Tests
 // ============================================================================
 
-mod payload_tests {
-    use x402_chain_miden::privacy::PrivacyMode;
-    use x402_chain_miden::v2_miden_exact::types::{ExactScheme, MidenExactPayload};
-    use x402_chain_miden::chain::MidenAccountAddress;
+mod scheme_tests {
+    use x402_chain_miden::v2_miden_exact::types::ExactScheme;
 
     #[test]
     fn test_exact_scheme_value() {
         assert_eq!(ExactScheme.to_string(), "exact");
     }
+}
 
-    #[test]
-    fn test_miden_payload_serde_roundtrip() {
-        let payload = MidenExactPayload {
-            from: "0xdeadbeef0102030405060708090a0b".parse().unwrap(),
-            proven_transaction: "aabbccdd".to_string(),
-            transaction_id: "11223344".to_string(),
-            transaction_inputs: "55667788".to_string(),
-            privacy_mode: PrivacyMode::Public,
-            note_data: None,
-        };
+// ============================================================================
+// Address from bytes Tests
+// ============================================================================
 
-        let json = serde_json::to_string(&payload).unwrap();
-        let recovered: MidenExactPayload = serde_json::from_str(&json).unwrap();
-        assert_eq!(payload.from, recovered.from);
-        assert_eq!(payload.proven_transaction, recovered.proven_transaction);
-        assert_eq!(payload.transaction_id, recovered.transaction_id);
-        assert_eq!(payload.transaction_inputs, recovered.transaction_inputs);
-    }
-
-    #[test]
-    fn test_miden_payload_json_structure() {
-        let payload = MidenExactPayload {
-            from: "0xaabbccddeeff00112233aabbccddee".parse().unwrap(),
-            proven_transaction: "cafebabe".to_string(),
-            transaction_id: "deadbeef".to_string(),
-            transaction_inputs: "01020304".to_string(),
-            privacy_mode: PrivacyMode::Public,
-            note_data: None,
-        };
-
-        let value = serde_json::to_value(&payload).unwrap();
-        assert!(value["from"].is_string());
-        assert_eq!(value["provenTransaction"], "cafebabe");
-        assert_eq!(value["transactionId"], "deadbeef");
-        assert_eq!(value["transactionInputs"], "01020304");
-    }
+mod address_tests {
+    use x402_chain_miden::chain::MidenAccountAddress;
 
     #[test]
     fn test_miden_address_from_bytes() {
@@ -422,9 +310,7 @@ mod error_tests {
 
     #[test]
     fn test_error_variants() {
-        // Ensure all error variants are constructible
-        let _ = MidenExactError::InvalidProof("bad proof".to_string());
-        let _ = MidenExactError::PaymentNotFound("test".to_string());
+        // Ensure remaining error variants are constructible
         let _ = MidenExactError::RecipientMismatch {
             expected: "a".to_string(),
             got: "b".to_string(),
@@ -433,10 +319,15 @@ mod error_tests {
             required: "100".to_string(),
             got: "50".to_string(),
         };
-        let _ = MidenExactError::TransactionExpired(0u64);
         let _ = MidenExactError::DeserializationError("parse fail".to_string());
-        let _ = MidenExactError::NoteBindingFailed("binding fail".to_string());
-        let _ = MidenExactError::AcceptedRequirementsMismatch;
         let _ = MidenExactError::ProviderError("rpc fail".to_string());
+        let _ = MidenExactError::NoteIdMismatch {
+            expected: "a".to_string(),
+            got: "b".to_string(),
+        };
+        let _ = MidenExactError::InclusionProofInvalid("bad proof".to_string());
+        let _ = MidenExactError::BlockHeaderNotFound(42);
+        let _ = MidenExactError::PaymentContextExpired;
+        let _ = MidenExactError::PaymentContextNotFound("ctx-123".to_string());
     }
 }

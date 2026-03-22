@@ -5875,8 +5875,6 @@ dependencies = [
 name = "x402-miden-client-example"
 version = "0.1.0"
 dependencies = [
- "async-trait",
- "hex",
  "reqwest",
  "serde",
  "serde_json",

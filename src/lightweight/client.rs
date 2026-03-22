@@ -21,9 +21,7 @@ use super::types::{LightweightPaymentHeader, LightweightPaymentRequirement};
 
 /// Trait for lightweight payment creation (agent side).
 ///
-/// Unlike the existing [`MidenSignerLike`](crate::v2_miden_exact::client::MidenSignerLike)
-/// which returns a serialized `ProvenTransaction` for the facilitator to verify
-/// and submit, this trait handles the complete flow:
+/// This trait handles the complete lightweight payment flow:
 ///
 /// 1. Create P2ID note from `recipient_digest` + `asset`
 /// 2. Execute the transaction locally in the Miden VM
